@@ -508,5 +508,82 @@ test('Firebase Sync: Different Cantin codes produce distinct Firestore IDs', () 
   assert.strictEqual(id2, 'cantin_ELC_202');
 });
 
+// Logic under test: Individual Sub-Market Deletion
+function deleteSubMarketFromList(markets, marketIdToDelete) {
+  return markets.filter((m) => m.id !== marketIdToDelete);
+}
+
+test('Sub-Market Management: Admin can delete a single market without clearing all markets', () => {
+  const initialMarkets = [
+    { id: 'm1', name: 'Kiosk A', currentDebt: 500 },
+    { id: 'm2', name: 'Kiosk B', currentDebt: 1000 },
+    { id: 'm3', name: 'Kiosk C', currentDebt: 250 },
+  ];
+
+  const updated = deleteSubMarketFromList(initialMarkets, 'm2');
+
+  assert.strictEqual(updated.length, 2);
+  assert.strictEqual(updated.some((m) => m.id === 'm2'), false);
+  assert.strictEqual(updated[0].id, 'm1');
+  assert.strictEqual(updated[1].id, 'm3');
+});
+
+// Logic under test: Cantin Creator Default Admin & Member Role Permissions
+function resolveUserCantinRole(cantin, user) {
+  if (!user) return 'user';
+  const email = (user.email || '').toLowerCase();
+  if (cantin.ownerEmail && cantin.ownerEmail.toLowerCase() === email) {
+    return 'admin';
+  }
+  if (cantin.creatorId && (cantin.creatorId === user.id || cantin.creatorId === user.firebaseUid)) {
+    return 'admin';
+  }
+  if (email && cantin.members && cantin.members[email]) {
+    return cantin.members[email].role;
+  }
+  return cantin.role || 'user';
+}
+
+test('Cantin Ownership: Creator is automatically assigned Admin role by default', () => {
+  const creatorUser = { id: 'u1', name: 'Salma', email: 'salma@example.com' };
+  const newCantin = {
+    id: 'cantin_ELC_101',
+    name: "Salma's Store",
+    code: 'ELC-101',
+    role: 'admin',
+    ownerEmail: 'salma@example.com',
+    creatorId: 'u1',
+    members: {
+      'salma@example.com': { role: 'admin', email: 'salma@example.com', name: 'Salma' },
+    },
+  };
+
+  const role = resolveUserCantinRole(newCantin, creatorUser);
+  assert.strictEqual(role, 'admin');
+});
+
+test('Cantin Ownership: Creator can assign and modify member roles between Admin and Staff', () => {
+  const cantin = {
+    id: 'cantin_ELC_101',
+    ownerEmail: 'salma@example.com',
+    creatorId: 'u1',
+    members: {
+      'salma@example.com': { role: 'admin', email: 'salma@example.com', name: 'Salma' },
+      'ahmed@example.com': { role: 'user', email: 'ahmed@example.com', name: 'Ahmed' },
+    },
+  };
+
+  const memberAhmed = { id: 'u2', name: 'Ahmed', email: 'ahmed@example.com' };
+  assert.strictEqual(resolveUserCantinRole(cantin, memberAhmed), 'user');
+
+  // Creator elevates Ahmed to admin
+  cantin.members['ahmed@example.com'].role = 'admin';
+  assert.strictEqual(resolveUserCantinRole(cantin, memberAhmed), 'admin');
+
+  // Creator reduces Ahmed back to staff
+  cantin.members['ahmed@example.com'].role = 'user';
+  assert.strictEqual(resolveUserCantinRole(cantin, memberAhmed), 'user');
+});
+
 
 

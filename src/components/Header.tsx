@@ -12,9 +12,9 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onOpenProfile }) => {
-  const { currentUser, isAdmin } = useAuth();
+  const { currentUser } = useAuth();
   const { t, language, toggleLanguage, isRTL } = useLanguage();
-  const { activeCantin } = useData();
+  const { activeCantin, isAdmin } = useData();
 
   const [switcherVisible, setSwitcherVisible] = useState(false);
 

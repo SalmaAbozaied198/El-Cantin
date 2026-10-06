@@ -34,6 +34,7 @@ export const CantinSwitcherModal: React.FC<CantinSwitcherModalProps> = ({
     joinCantinByCode,
     deleteCantin,
     renameCantin,
+    isOwner,
   } = useData();
   const { t, isRTL } = useLanguage();
 
@@ -60,14 +61,20 @@ export const CantinSwitcherModal: React.FC<CantinSwitcherModalProps> = ({
   };
 
   const handleDeleteCantin = (cantin: any) => {
-    if (allCantins.length <= 1) {
-      Alert.alert(t('deleteCantin'), t('cannotDeleteOnlyCantin'));
-      return;
-    }
+    const isCreator = isOwner(cantin);
+    const title = isCreator
+      ? (isRTL ? 'حذف الكانتين' : 'Delete Cantin')
+      : (isRTL ? 'مغادرة الكانتين' : 'Leave Cantin');
+    const msg = isCreator
+      ? (isRTL
+          ? `هل أنت متأكد من حذف الكانتين "${cantin.name}" نهائياً من السحابة وجهازك؟`
+          : `Are you sure you want to permanently delete "${cantin.name}" from cloud and this device?`)
+      : (isRTL
+          ? `هل أنت متأكد من مغادرة الكانتين "${cantin.name}" من هذا الجهاز؟`
+          : `Are you sure you want to leave "${cantin.name}" on this device?`);
 
     if (Platform.OS === 'web') {
-      const msg = t('deleteCantinConfirm').replace('{name}', cantin.name);
-      const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+      const confirmed = typeof window !== 'undefined' ? window.confirm(`${title}\n\n${msg}`) : true;
       if (confirmed) {
         deleteCantin(cantin.id);
       }
@@ -75,12 +82,12 @@ export const CantinSwitcherModal: React.FC<CantinSwitcherModalProps> = ({
     }
 
     Alert.alert(
-      t('deleteCantin'),
-      t('deleteCantinConfirm').replace('{name}', cantin.name),
+      title,
+      msg,
       [
         { text: t('cancel'), style: 'cancel' },
         {
-          text: t('delete'),
+          text: isCreator ? t('delete') : (isRTL ? 'مغادرة' : 'Leave'),
           style: 'destructive',
           onPress: async () => {
             await deleteCantin(cantin.id);
@@ -297,14 +304,16 @@ export const CantinSwitcherModal: React.FC<CantinSwitcherModalProps> = ({
                           </TouchableOpacity>
                         )}
 
-                        {allCantins.length > 1 && (
-                          <TouchableOpacity
-                            style={styles.deleteCantinBtn}
-                            onPress={() => handleDeleteCantin(cantin)}
-                          >
-                            <MaterialCommunityIcons name="trash-can-outline" size={18} color={colors.danger} />
-                          </TouchableOpacity>
-                        )}
+                        <TouchableOpacity
+                          style={styles.deleteCantinBtn}
+                          onPress={() => handleDeleteCantin(cantin)}
+                        >
+                          <MaterialCommunityIcons
+                            name={isOwner(cantin) ? "trash-can-outline" : "exit-to-app"}
+                            size={18}
+                            color={isOwner(cantin) ? colors.danger : colors.textSecondary}
+                          />
+                        </TouchableOpacity>
                       </View>
                     </View>
                   );

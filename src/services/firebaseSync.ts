@@ -2,6 +2,7 @@ import {
   doc,
   setDoc,
   getDoc,
+  deleteDoc,
   onSnapshot,
 } from 'firebase/firestore';
 import { getFirebaseInstance, isFirebaseConfigured } from '../config/firebase';
@@ -41,6 +42,51 @@ export const FirebaseSyncService = {
     } catch (e) {
       console.warn('Firebase fetch cantin profile error:', e);
       return null;
+    }
+  },
+
+  subscribeCantinProfile(
+    cantinId: string,
+    onData: (cantin: CantinProfile) => void
+  ): (() => void) | null {
+    if (!this.isAvailable()) return null;
+    const { db } = getFirebaseInstance();
+    if (!db) return null;
+
+    try {
+      const docRef = doc(db, 'cantins', cantinId);
+      return onSnapshot(
+        docRef,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            onData(snapshot.data() as CantinProfile);
+          }
+        },
+        (error) => {
+          console.warn('Firestore cantin profile listener error:', error);
+        }
+      );
+    } catch (e) {
+      console.warn('Firebase cantin profile listener error:', e);
+      return null;
+    }
+  },
+
+  async deleteCantin(cantinId: string): Promise<void> {
+    if (!this.isAvailable()) return;
+    const { db } = getFirebaseInstance();
+    if (!db) return;
+
+    try {
+      await Promise.all([
+        deleteDoc(doc(db, 'cantins', cantinId, 'data', 'inventory')),
+        deleteDoc(doc(db, 'cantins', cantinId, 'data', 'sub_markets')),
+        deleteDoc(doc(db, 'cantins', cantinId, 'data', 'transactions')),
+        deleteDoc(doc(db, 'cantins', cantinId, 'data', 'transferred')),
+        deleteDoc(doc(db, 'cantins', cantinId)),
+      ]);
+    } catch (e) {
+      console.warn('Firebase delete cantin error:', e);
     }
   },
 

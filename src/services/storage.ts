@@ -181,6 +181,18 @@ export const StorageService = {
   async createCantin(name: string, isShared: boolean, currentUser?: User | null): Promise<CantinProfile> {
     const cantins = await this.getCantins();
     const code = `ELC-${Math.floor(100 + Math.random() * 900)}`;
+    const userEmail = currentUser?.email?.toLowerCase() || '';
+    const initialMembers: Record<string, any> = {};
+    if (userEmail) {
+      initialMembers[userEmail] = {
+        userId: currentUser?.id || currentUser?.firebaseUid || `user_${Date.now()}`,
+        name: currentUser?.name || 'Admin',
+        email: userEmail,
+        role: 'admin',
+        joinedAt: new Date().toISOString(),
+      };
+    }
+
     const newCantin: CantinProfile = {
       id: getCanonicalCantinId(code),
       name: name.trim(),
@@ -188,6 +200,9 @@ export const StorageService = {
       isShared,
       role: 'admin',
       ownerName: currentUser?.name || 'Admin',
+      ownerEmail: currentUser?.email || undefined,
+      creatorId: currentUser?.id || currentUser?.firebaseUid || undefined,
+      members: initialMembers,
       createdAt: new Date().toISOString(),
     };
 
@@ -223,23 +238,49 @@ export const StorageService = {
   async joinCantinByCode(code: string, currentUser?: User | null): Promise<CantinProfile | null> {
     const cleanCode = code.trim().toUpperCase();
     const cantins = await this.getCantins();
+    const userEmail = currentUser?.email?.toLowerCase() || '';
 
     // Check if already in user's saved cantins
     const existing = cantins.find((c) => c.code.toUpperCase() === cleanCode);
     if (existing) {
+      // Ensure user is in members map
+      if (userEmail && (!existing.members || !existing.members[userEmail])) {
+        const isOwner = existing.ownerEmail?.toLowerCase() === userEmail || existing.creatorId === currentUser?.id;
+        existing.members = existing.members || {};
+        existing.members[userEmail] = {
+          userId: currentUser?.id || currentUser?.firebaseUid || `user_${Date.now()}`,
+          name: currentUser?.name || 'Member',
+          email: userEmail,
+          role: isOwner ? 'admin' : 'user',
+          joinedAt: new Date().toISOString(),
+        };
+        await this.updateCantin(existing.id, { members: existing.members });
+      }
       await this.setActiveCantinId(existing.id);
       return existing;
     }
 
     // Connect to shared cantin with canonical ID
     const canonicalId = getCanonicalCantinId(cleanCode);
+    const initialMembers: Record<string, any> = {};
+    if (userEmail) {
+      initialMembers[userEmail] = {
+        userId: currentUser?.id || currentUser?.firebaseUid || `user_${Date.now()}`,
+        name: currentUser?.name || 'Team Member',
+        email: userEmail,
+        role: 'user', // regular staff by default when joining via code
+        joinedAt: new Date().toISOString(),
+      };
+    }
+
     const joinedCantin: CantinProfile = {
       id: canonicalId,
       name: `Team Cantin (${cleanCode})`,
       code: cleanCode,
       isShared: true,
       role: 'user', // regular staff by default when joining via code
-      ownerName: currentUser?.name || 'Team Manager',
+      ownerName: 'Team Manager',
+      members: initialMembers,
       createdAt: new Date().toISOString(),
     };
 
@@ -247,6 +288,13 @@ export const StorageService = {
     await this.saveCantins(updated);
     await this.setActiveCantinId(joinedCantin.id);
     return joinedCantin;
+  },
+
+  async deleteSubMarket(cantinId: string, subMarketId: string): Promise<SubMarket[]> {
+    const markets = await this.getSubMarkets(cantinId);
+    const updated = markets.filter((m) => m.id !== subMarketId);
+    await this.saveSubMarkets(cantinId, updated);
+    return updated;
   },
 
   // ----------------------------------------------------

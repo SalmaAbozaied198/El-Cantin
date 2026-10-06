@@ -13,16 +13,20 @@ interface DataContextType {
   stats: MainStoreStats;
   isLoading: boolean;
   isCloudSynced: boolean;
+  isAdmin: boolean;
+  isOwner: (cantin?: CantinProfile) => boolean;
   switchCantin: (id: string) => Promise<void>;
   createCantin: (name: string, isShared: boolean) => Promise<CantinProfile>;
   joinCantinByCode: (code: string) => Promise<CantinProfile | null>;
   deleteCantin: (cantinId: string) => Promise<boolean>;
   renameCantin: (cantinId: string, newName: string) => Promise<void>;
+  updateMemberRole: (memberEmail: string, newRole: 'admin' | 'user') => Promise<void>;
   clearAllAppData: () => Promise<void>;
   addInventoryItem: (item: Omit<InventoryItem, 'id' | 'piecesPerCardboard' | 'costPerCardboard' | 'totalPieces' | 'totalCost' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   updateInventoryItem: (id: string, item: Omit<InventoryItem, 'id' | 'piecesPerCardboard' | 'costPerCardboard' | 'totalPieces' | 'totalCost' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   deleteInventoryItem: (id: string) => Promise<void>;
   addSubMarket: (name: string, location?: string, phone?: string, hasCoupons?: boolean) => Promise<void>;
+  deleteSubMarket: (subMarketId: string) => Promise<boolean>;
   toggleMarketCoupons: (subMarketId: string) => Promise<void>;
   addMarketCoupon: (subMarketId: string, code: string, value: number, note?: string) => Promise<void>;
   toggleCouponRedemption: (subMarketId: string, couponId: string) => Promise<boolean>;
@@ -116,6 +120,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         StorageService.saveTotalTransferred(cantinId, cloudVal);
       });
       if (unsubTrans) unsubscribersRef.current.push(unsubTrans);
+
+      const unsubProfile = FirebaseSyncService.subscribeCantinProfile(cantinId, (cloudProfile) => {
+        if (cloudProfile && cloudProfile.name) {
+          setActiveCantin((prev) => ({ ...prev, ...cloudProfile }));
+          StorageService.updateCantin(cantinId, cloudProfile);
+        }
+      });
+      if (unsubProfile) unsubscribersRef.current.push(unsubProfile);
     }
   };
 
@@ -618,11 +630,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ]);
   };
 
+  // 4c. Delete Sub-Market
+  const deleteSubMarket = async (subMarketId: string): Promise<boolean> => {
+    const updated = subMarkets.filter((m) => m.id !== subMarketId);
+    setSubMarkets(updated);
+    await Promise.all([
+      StorageService.saveSubMarkets(activeCantin.id, updated),
+      FirebaseSyncService.pushSubMarkets(activeCantin.id, updated),
+    ]);
+    return true;
+  };
+
   // 7. Delete Cantin
   const deleteCantin = async (cantinId: string): Promise<boolean> => {
     if (allCantins.length <= 1) {
       return false;
     }
+    // Delete in cloud and local storage
+    await FirebaseSyncService.deleteCantin(cantinId);
     await StorageService.deleteCantin(cantinId);
     const updated = await StorageService.getCantins();
     setAllCantins(updated);
@@ -633,6 +658,65 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await loadStoreData(next.id);
     }
     return true;
+  };
+
+  // 7b. Update Member Role inside active Cantin
+  const updateMemberRole = async (memberEmail: string, newRole: 'admin' | 'user'): Promise<void> => {
+    const cleanEmail = memberEmail.toLowerCase();
+    const currentMembers = activeCantin.members || {};
+    const member = currentMembers[cleanEmail];
+    if (!member) return;
+
+    const updatedMembers = {
+      ...currentMembers,
+      [cleanEmail]: {
+        ...member,
+        role: newRole,
+      },
+    };
+
+    const updatedProfile: CantinProfile = {
+      ...activeCantin,
+      members: updatedMembers,
+    };
+
+    setActiveCantin(updatedProfile);
+    await StorageService.updateCantin(activeCantin.id, { members: updatedMembers });
+    await FirebaseSyncService.pushCantinProfile(updatedProfile);
+    const updatedList = await StorageService.getCantins();
+    setAllCantins(updatedList);
+  };
+
+  // Determine if current user is admin of active Cantin
+  const isCantinAdmin = (): boolean => {
+    if (!currentUser) return false;
+    const userEmail = currentUser.email?.toLowerCase();
+    // 1. Is owner / creator
+    if (activeCantin.ownerEmail && userEmail && activeCantin.ownerEmail.toLowerCase() === userEmail) {
+      return true;
+    }
+    if (activeCantin.creatorId && (activeCantin.creatorId === currentUser.id || activeCantin.creatorId === currentUser.firebaseUid)) {
+      return true;
+    }
+    // 2. Is in members list with admin role
+    if (userEmail && activeCantin.members?.[userEmail]?.role) {
+      return activeCantin.members[userEmail].role === 'admin';
+    }
+    // 3. Fallback to activeCantin.role or currentUser.role
+    return activeCantin.role === 'admin' || currentUser.role === 'admin';
+  };
+
+  const isCantinOwner = (cantin?: CantinProfile): boolean => {
+    const target = cantin || activeCantin;
+    if (!currentUser) return false;
+    const userEmail = currentUser.email?.toLowerCase();
+    if (target.ownerEmail && userEmail && target.ownerEmail.toLowerCase() === userEmail) {
+      return true;
+    }
+    if (target.creatorId && (target.creatorId === currentUser.id || target.creatorId === currentUser.firebaseUid)) {
+      return true;
+    }
+    return false;
   };
 
   // 8. Rename Cantin
@@ -692,16 +776,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         stats,
         isLoading,
         isCloudSynced: FirebaseSyncService.isAvailable(),
+        isAdmin: isCantinAdmin(),
+        isOwner: isCantinOwner,
         switchCantin,
         createCantin,
         joinCantinByCode,
         deleteCantin,
         renameCantin,
+        updateMemberRole,
         clearAllAppData,
         addInventoryItem,
         updateInventoryItem,
         deleteInventoryItem,
         addSubMarket,
+        deleteSubMarket,
         toggleMarketCoupons,
         addMarketCoupon,
         toggleCouponRedemption,

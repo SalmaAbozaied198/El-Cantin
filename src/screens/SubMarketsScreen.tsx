@@ -6,11 +6,12 @@ import {
   FlatList,
   TouchableOpacity,
   TextInput,
+  Alert,
+  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useData } from '../context/DataContext';
-import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { SubMarket } from '../types';
 import { StatCard } from '../components/StatCard';
@@ -27,6 +28,7 @@ export const SubMarketsScreen: React.FC = () => {
     subMarkets,
     stats,
     addSubMarket,
+    deleteSubMarket,
     toggleMarketCoupons,
     addMarketCoupon,
     toggleCouponRedemption,
@@ -34,8 +36,8 @@ export const SubMarketsScreen: React.FC = () => {
     transferGoodsValue,
     recordSubMarketGain,
     redeemCoupon,
+    isAdmin,
   } = useData();
-  const { isAdmin } = useAuth();
   const { t, isRTL } = useLanguage();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -73,6 +75,36 @@ export const SubMarketsScreen: React.FC = () => {
   const handleOpenManageCoupons = (market: SubMarket) => {
     setMarketForCoupons(market);
     setCouponsModalVisible(true);
+  };
+
+  const handleDeleteMarket = (market: SubMarket) => {
+    if (!isAdmin) return;
+    const msg = isRTL
+      ? `هل أنت متأكد من حذف منفذ "${market.name}"؟`
+      : `Are you sure you want to delete sub-market "${market.name}"?`;
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+      if (confirmed) {
+        deleteSubMarket(market.id);
+      }
+      return;
+    }
+
+    Alert.alert(
+      isRTL ? 'حذف المنفذ' : 'Delete Sub-Market',
+      msg,
+      [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('delete'),
+          style: 'destructive',
+          onPress: async () => {
+            await deleteSubMarket(market.id);
+          },
+        },
+      ]
+    );
   };
 
   const renderMarketItem = ({ item }: { item: SubMarket }) => {
@@ -133,6 +165,15 @@ export const SubMarketsScreen: React.FC = () => {
                 {hasDebt ? t('activeDebt') : t('settled')}
               </Text>
             </View>
+
+            {isAdmin && (
+              <TouchableOpacity
+                style={styles.deleteMarketIconBtn}
+                onPress={() => handleDeleteMarket(item)}
+              >
+                <MaterialCommunityIcons name="trash-can-outline" size={17} color={colors.danger} />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -507,6 +548,16 @@ const styles = StyleSheet.create({
   },
   debtSettledTag: {
     backgroundColor: colors.successLight,
+  },
+  deleteMarketIconBtn: {
+    padding: 6,
+    marginLeft: 6,
+    borderRadius: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   debtTagText: {
     fontSize: 9,

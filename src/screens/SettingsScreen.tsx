@@ -19,7 +19,15 @@ import { CantinSwitcherModal } from '../components/CantinSwitcherModal';
 
 export const SettingsScreen: React.FC = () => {
   const { currentUser, users, switchUser, addUser, deleteUser, logoutUser } = useAuth();
-  const { resetToDemo, clearAllMarkets, clearAllAppData, activeCantin } = useData();
+  const {
+    resetToDemo,
+    clearAllMarkets,
+    clearAllAppData,
+    activeCantin,
+    isAdmin,
+    isOwner,
+    updateMemberRole,
+  } = useData();
   const { t, language, setLanguage, isRTL } = useLanguage();
 
   const [newUserName, setNewUserName] = useState('');
@@ -433,6 +441,115 @@ export const SettingsScreen: React.FC = () => {
         </View>
       </View>
 
+      {/* Cantin Members & Roles Card */}
+      <View style={styles.card}>
+        <View style={[styles.cardHeaderBetween, isRTL && styles.rowRtl]}>
+          <View style={[styles.cardHeaderLeft, isRTL && styles.rowRtl]}>
+            <View style={[styles.iconWrapper, { backgroundColor: '#EDE9FE' }]}>
+              <MaterialCommunityIcons name="account-group" size={24} color="#7C3AED" />
+            </View>
+            <View style={{ alignItems: isRTL ? 'flex-end' : 'flex-start' }}>
+              <Text style={styles.cardTitle}>{isRTL ? 'أعضاء الكانتين والصلاحيات' : 'Cantin Members & Roles'}</Text>
+              <Text style={styles.cardSub}>
+                {isRTL
+                  ? `الأشخاص المشتركون في متجر (${activeCantin.name})`
+                  : `Collaborators in (${activeCantin.name})`}
+              </Text>
+            </View>
+          </View>
+
+          {isAdmin && (
+            <View style={[styles.adminNoticePill, isRTL && styles.rowRtl]}>
+              <MaterialCommunityIcons name="shield-check" size={14} color={colors.accentDark} />
+              <Text style={styles.adminNoticePillText}>{isRTL ? 'أنت المدير' : 'You are Admin'}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Members List */}
+        <View style={styles.membersListContainer}>
+          {Object.values(activeCantin.members || {}).map((member) => {
+            const isMemberOwner =
+              activeCantin.ownerEmail?.toLowerCase() === member.email.toLowerCase() ||
+              activeCantin.creatorId === member.userId;
+            const isMe =
+              currentUser?.email?.toLowerCase() === member.email.toLowerCase() ||
+              currentUser?.id === member.userId;
+
+            return (
+              <View
+                key={member.email || member.userId}
+                style={[styles.memberItem, isRTL && styles.rowRtl]}
+              >
+                <View style={[styles.memberLeft, isRTL && styles.rowRtl]}>
+                  <View style={[styles.avatarMini, member.role === 'admin' ? styles.avatarAdmin : styles.avatarStaff]}>
+                    <MaterialCommunityIcons
+                      name={member.role === 'admin' ? 'shield-account' : 'account'}
+                      size={18}
+                      color={member.role === 'admin' ? colors.accentDark : colors.primaryDark}
+                    />
+                  </View>
+                  <View style={[{ flex: 1, marginHorizontal: 8 }, isRTL ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}>
+                    <View style={[styles.memberNameRow, isRTL && styles.rowRtl]}>
+                      <Text style={styles.memberNameText} numberOfLines={1}>{member.name}</Text>
+                      {isMe && (
+                        <View style={styles.meBadge}>
+                          <Text style={styles.meBadgeText}>{isRTL ? 'أنت' : 'You'}</Text>
+                        </View>
+                      )}
+                      {isMemberOwner && (
+                        <View style={styles.ownerBadge}>
+                          <Text style={styles.ownerBadgeText}>{isRTL ? 'المالك' : 'Owner'}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.memberEmailText} numberOfLines={1}>{member.email}</Text>
+                  </View>
+                </View>
+
+                {/* Role Switcher or Static Badge */}
+                {isAdmin && !isMemberOwner ? (
+                  <View style={[styles.roleToggleGroup, isRTL && styles.rowRtl]}>
+                    <TouchableOpacity
+                      style={[styles.roleToggleBtn, member.role === 'admin' && styles.roleToggleBtnActive]}
+                      onPress={() => updateMemberRole(member.email, 'admin')}
+                    >
+                      <Text style={[styles.roleToggleBtnText, member.role === 'admin' && styles.roleToggleBtnTextActive]}>
+                        {t('admin')}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.roleToggleBtn, member.role === 'user' && styles.roleToggleBtnActive]}
+                      onPress={() => updateMemberRole(member.email, 'user')}
+                    >
+                      <Text style={[styles.roleToggleBtnText, member.role === 'user' && styles.roleToggleBtnTextActive]}>
+                        {t('staff')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={[styles.roleTagStatic, member.role === 'admin' ? styles.adminTagStatic : styles.staffTagStatic]}>
+                    <Text style={[styles.roleTagStaticText, member.role === 'admin' ? styles.adminTagStaticText : styles.staffTagStaticText]}>
+                      {member.role === 'admin' ? t('admin') : t('staff')}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
+
+          {(!activeCantin.members || Object.keys(activeCantin.members).length === 0) && (
+            <View style={styles.noMembersBox}>
+              <Text style={styles.noMembersText}>
+                {isRTL
+                  ? `المالك: ${activeCantin.ownerName} (المدير الافتراضي). شارك كود الكانتين ${activeCantin.code} لينضم أعضاء آخرون.`
+                  : `Owner: ${activeCantin.ownerName} (Default Admin). Share code ${activeCantin.code} for teammates to join.`}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+
       {/* Backend / Firebase Integration Status */}
       <View style={styles.card}>
         <View style={[styles.cardHeader, isRTL && styles.rowRtl]}>
@@ -841,5 +958,149 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.danger,
     marginHorizontal: 8,
+  },
+  adminNoticePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.accentLight,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  adminNoticePillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.accentDark,
+    marginLeft: 4,
+  },
+  membersListContainer: {
+    marginTop: 8,
+  },
+  memberItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  memberLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  avatarMini: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarAdmin: {
+    backgroundColor: colors.accentLight,
+  },
+  avatarStaff: {
+    backgroundColor: colors.primaryLight,
+  },
+  memberNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  memberNameText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  memberEmailText: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  meBadge: {
+    backgroundColor: colors.primaryLight,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginHorizontal: 4,
+  },
+  meBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.primaryDark,
+  },
+  ownerBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginHorizontal: 4,
+  },
+  ownerBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.accentDark,
+  },
+  roleToggleGroup: {
+    flexDirection: 'row',
+    backgroundColor: colors.cardHover,
+    borderRadius: 8,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  roleToggleBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  roleToggleBtnActive: {
+    backgroundColor: colors.white,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  roleToggleBtnText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
+  roleToggleBtnTextActive: {
+    color: colors.primaryDark,
+    fontWeight: '800',
+  },
+  roleTagStatic: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  adminTagStatic: {
+    backgroundColor: colors.accentLight,
+  },
+  staffTagStatic: {
+    backgroundColor: colors.primaryLight,
+  },
+  roleTagStaticText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  adminTagStaticText: {
+    color: colors.accentDark,
+  },
+  staffTagStaticText: {
+    color: colors.primaryDark,
+  },
+  noMembersBox: {
+    padding: 12,
+    backgroundColor: colors.cardHover,
+    borderRadius: 10,
+    marginTop: 6,
+  },
+  noMembersText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    textAlign: 'center',
   },
 });

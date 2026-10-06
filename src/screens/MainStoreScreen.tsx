@@ -19,8 +19,7 @@ import { StatCard } from '../components/StatCard';
 import { AddInventoryModal } from '../components/AddInventoryModal';
 
 export const MainStoreScreen: React.FC = () => {
-  const { inventory, stats, addInventoryItem, updateInventoryItem, deleteInventoryItem } = useData();
-  const { isAdmin } = useAuth();
+  const { inventory, stats, addInventoryItem, updateInventoryItem, deleteInventoryItem, isAdmin } = useData();
   const { t, isRTL } = useLanguage();
 
   const [searchQuery, setSearchQuery] = useState('');

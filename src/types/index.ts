@@ -75,6 +75,14 @@ export interface Transaction {
   note?: string;
 }
 
+export interface CantinMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: UserRole;             // 'admin' | 'user' in this cantin
+  joinedAt: string;
+}
+
 export interface CantinProfile {
   id: string;
   name: string;
@@ -82,7 +90,11 @@ export interface CantinProfile {
   isShared: boolean;          // true = team shared, false = private personal
   role: UserRole;             // admin or user in this Cantin
   ownerName: string;
+  ownerEmail?: string;        // Email of the creator/admin
+  creatorId?: string;         // Unique user ID or firebase UID of creator
+  members?: Record<string, CantinMember>; // Map of member email -> CantinMember
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface MainStoreStats {
