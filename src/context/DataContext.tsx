@@ -132,6 +132,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const createCantin = async (name: string, isShared: boolean): Promise<CantinProfile> => {
     const newCantin = await StorageService.createCantin(name, isShared, currentUser);
+    await FirebaseSyncService.pushCantinProfile(newCantin);
     const updatedList = await StorageService.getCantins();
     setAllCantins(updatedList);
     setActiveCantin(newCantin);
@@ -140,8 +141,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const joinCantinByCode = async (code: string): Promise<CantinProfile | null> => {
-    const joined = await StorageService.joinCantinByCode(code, currentUser);
+    const cleanCode = code.trim().toUpperCase();
+    const joined = await StorageService.joinCantinByCode(cleanCode, currentUser);
     if (joined) {
+      // Check if Firestore has a more complete profile (like custom name)
+      const cloudProfile = await FirebaseSyncService.fetchCantinProfile(joined.id);
+      if (cloudProfile && cloudProfile.name) {
+        await StorageService.updateCantin(joined.id, { name: cloudProfile.name, ownerName: cloudProfile.ownerName });
+        joined.name = cloudProfile.name;
+        joined.ownerName = cloudProfile.ownerName;
+      }
+
       const updatedList = await StorageService.getCantins();
       setAllCantins(updatedList);
       setActiveCantin(joined);
@@ -630,6 +640,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await StorageService.updateCantin(cantinId, { name: newName.trim() });
     const updated = await StorageService.getCantins();
     setAllCantins(updated);
+    const target = updated.find((c) => c.id === cantinId);
+    if (target) {
+      await FirebaseSyncService.pushCantinProfile(target);
+    }
     if (activeCantin.id === cantinId) {
       setActiveCantin((prev) => ({ ...prev, name: newName.trim() }));
     }

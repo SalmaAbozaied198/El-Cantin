@@ -477,5 +477,36 @@ test('Coupons: Undoing/unchecking a redeemed coupon restores its value to debt',
   assert.strictEqual(updatedMarket.totalCouponsRedeemed, 0);
 });
 
+// Logic under test: Canonical Cantin ID normalization for Firestore sync
+function getCanonicalCantinId(code) {
+  const clean = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  return `cantin_${clean}`;
+}
+
+test('Firebase Sync: Canonical Cantin ID generates identical ID across devices for same code', () => {
+  const codeDeviceA = 'elc-101';
+  const codeDeviceB = 'ELC-101 ';
+  const codeDeviceC = ' ELC_101';
+
+  const idA = getCanonicalCantinId(codeDeviceA);
+  const idB = getCanonicalCantinId(codeDeviceB);
+  const idC = getCanonicalCantinId(codeDeviceC);
+
+  assert.strictEqual(idA, 'cantin_ELC_101');
+  assert.strictEqual(idB, 'cantin_ELC_101');
+  assert.strictEqual(idC, 'cantin_ELC_101');
+  assert.strictEqual(idA, idB);
+  assert.strictEqual(idB, idC);
+});
+
+test('Firebase Sync: Different Cantin codes produce distinct Firestore IDs', () => {
+  const id1 = getCanonicalCantinId('ELC-101');
+  const id2 = getCanonicalCantinId('ELC-202');
+
+  assert.notStrictEqual(id1, id2);
+  assert.strictEqual(id1, 'cantin_ELC_101');
+  assert.strictEqual(id2, 'cantin_ELC_202');
+});
+
 
 

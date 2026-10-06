@@ -1,12 +1,24 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  sendPasswordResetEmail,
+  onAuthStateChanged,
+  User as FirebaseUser,
+} from 'firebase/auth';
 import { User } from '../types';
 import { StorageService } from '../services/storage';
+import { getFirebaseInstance } from '../config/firebase';
 
 interface AuthContextType {
   currentUser: User | null;
   users: User[];
   isAdmin: boolean;
   loginUser: (user: User) => Promise<void>;
+  signInWithFirebase: (email: string, pass: string) => Promise<User>;
+  signUpWithFirebase: (name: string, email: string, pass: string, role: 'admin' | 'user') => Promise<User>;
+  resetPassword: (email: string) => Promise<void>;
   switchUser: (userId: string) => Promise<void>;
   addUser: (name: string, email: string, role: 'admin' | 'user') => Promise<User>;
   deleteUser: (userId: string) => Promise<void>;
@@ -22,7 +34,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    loadUserData();
+    const { auth } = getFirebaseInstance();
+    let unsubscribe: (() => void) | undefined;
+
+    if (auth) {
+      unsubscribe = onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
+        if (fbUser && fbUser.email) {
+          const storedUsers = await StorageService.getStoredUsers();
+          let localUser = storedUsers.find((u) => u.email.toLowerCase() === fbUser.email?.toLowerCase());
+
+          if (!localUser) {
+            localUser = {
+              id: fbUser.uid,
+              name: fbUser.displayName || fbUser.email.split('@')[0],
+              email: fbUser.email,
+              role: 'admin',
+              firebaseUid: fbUser.uid,
+            };
+            const updated = [...storedUsers, localUser];
+            await StorageService.saveUsers(updated);
+            setUsers(updated);
+          }
+          await StorageService.setCurrentUser(localUser);
+          setCurrentUser(localUser);
+        } else {
+          // If signed out of firebase, check if we have a locally stored current user session
+          const current = await StorageService.getCurrentUser();
+          setCurrentUser(current);
+        }
+        setIsLoading(false);
+      });
+    } else {
+      loadUserData();
+    }
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const loadUserData = async () => {
@@ -38,10 +86,73 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const signInWithFirebase = async (email: string, pass: string): Promise<User> => {
+    const { auth } = getFirebaseInstance();
+    if (!auth) throw new Error('Firebase Auth is not configured');
+
+    const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
+    const fbUser = cred.user;
+
+    const storedUsers = await StorageService.getStoredUsers();
+    let localUser = storedUsers.find((u) => u.email.toLowerCase() === fbUser.email?.toLowerCase());
+
+    if (!localUser) {
+      localUser = {
+        id: fbUser.uid,
+        name: fbUser.displayName || fbUser.email?.split('@')[0] || 'User',
+        email: fbUser.email || email,
+        role: 'admin',
+        firebaseUid: fbUser.uid,
+      };
+      const updated = [...storedUsers, localUser];
+      await StorageService.saveUsers(updated);
+      setUsers(updated);
+    }
+
+    await StorageService.setCurrentUser(localUser);
+    setCurrentUser(localUser);
+    return localUser;
+  };
+
+  const signUpWithFirebase = async (
+    name: string,
+    email: string,
+    pass: string,
+    role: 'admin' | 'user'
+  ): Promise<User> => {
+    const { auth } = getFirebaseInstance();
+    if (!auth) throw new Error('Firebase Auth is not configured');
+
+    const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+    const fbUser = cred.user;
+
+    const newUser: User = {
+      id: fbUser.uid,
+      name: name.trim(),
+      email: fbUser.email || email.trim(),
+      role,
+      firebaseUid: fbUser.uid,
+    };
+
+    const storedUsers = await StorageService.getStoredUsers();
+    const updated = [...storedUsers.filter((u) => u.email.toLowerCase() !== newUser.email.toLowerCase()), newUser];
+    await StorageService.saveUsers(updated);
+    await StorageService.setCurrentUser(newUser);
+
+    setUsers(updated);
+    setCurrentUser(newUser);
+    return newUser;
+  };
+
+  const resetPassword = async (email: string): Promise<void> => {
+    const { auth } = getFirebaseInstance();
+    if (!auth) throw new Error('Firebase Auth is not configured');
+    await sendPasswordResetEmail(auth, email.trim());
+  };
+
   const loginUser = async (user: User) => {
     setCurrentUser(user);
     await StorageService.setCurrentUser(user);
-    // Ensure the logged-in user is saved into the stored users list
     setUsers((prev) => {
       const exists = prev.some((u) => u.id === user.id);
       if (!exists) {
@@ -90,6 +201,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logoutUser = async () => {
+    const { auth } = getFirebaseInstance();
+    if (auth) {
+      try {
+        await signOut(auth);
+      } catch (e) {
+        console.warn('Sign out error:', e);
+      }
+    }
     await StorageService.setCurrentUser(null);
     setCurrentUser(null);
   };
@@ -101,6 +220,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         users,
         isAdmin: currentUser?.role === 'admin',
         loginUser,
+        signInWithFirebase,
+        signUpWithFirebase,
+        resetPassword,
         switchUser,
         addUser,
         deleteUser,

@@ -1,14 +1,47 @@
 import {
   doc,
   setDoc,
+  getDoc,
   onSnapshot,
 } from 'firebase/firestore';
 import { getFirebaseInstance, isFirebaseConfigured } from '../config/firebase';
-import { InventoryItem, SubMarket, Transaction } from '../types';
+import { InventoryItem, SubMarket, Transaction, CantinProfile } from '../types';
 
 export const FirebaseSyncService = {
   isAvailable(): boolean {
     return isFirebaseConfigured();
+  },
+
+  // 0. CANTIN PROFILE SYNC
+  async pushCantinProfile(cantin: CantinProfile): Promise<void> {
+    if (!this.isAvailable()) return;
+    const { db } = getFirebaseInstance();
+    if (!db) return;
+
+    try {
+      const docRef = doc(db, 'cantins', cantin.id);
+      await setDoc(docRef, { ...cantin, updatedAt: new Date().toISOString() }, { merge: true });
+    } catch (e) {
+      console.warn('Firebase push cantin profile error:', e);
+    }
+  },
+
+  async fetchCantinProfile(cantinId: string): Promise<CantinProfile | null> {
+    if (!this.isAvailable()) return null;
+    const { db } = getFirebaseInstance();
+    if (!db) return null;
+
+    try {
+      const docRef = doc(db, 'cantins', cantinId);
+      const snapshot = await getDoc(docRef);
+      if (snapshot.exists()) {
+        return snapshot.data() as CantinProfile;
+      }
+      return null;
+    } catch (e) {
+      console.warn('Firebase fetch cantin profile error:', e);
+      return null;
+    }
   },
 
   // 1. INVENTORY SYNC

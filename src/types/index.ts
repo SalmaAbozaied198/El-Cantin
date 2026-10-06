@@ -6,6 +6,7 @@ export interface User {
   email: string;
   role: UserRole;
   phone?: string;
+  firebaseUid?: string;
 }
 
 export interface InventoryItem {

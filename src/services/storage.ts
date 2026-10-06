@@ -12,9 +12,14 @@ const STORAGE_KEYS = {
   TOTAL_TRANSFERRED_PREFIX: '@el_cantin_transferred_',
 };
 
+export const getCanonicalCantinId = (code: string): string => {
+  const clean = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  return `cantin_${clean}`;
+};
+
 // Default initial Cantin profile
 export const DEFAULT_CANTIN: CantinProfile = {
-  id: 'cantin_main_store',
+  id: getCanonicalCantinId('ELC-101'),
   name: "Salma's Main Cantin",
   code: 'ELC-101',
   isShared: true,
@@ -177,7 +182,7 @@ export const StorageService = {
     const cantins = await this.getCantins();
     const code = `ELC-${Math.floor(100 + Math.random() * 900)}`;
     const newCantin: CantinProfile = {
-      id: `cantin_${Date.now()}`,
+      id: getCanonicalCantinId(code),
       name: name.trim(),
       code,
       isShared,
@@ -226,9 +231,10 @@ export const StorageService = {
       return existing;
     }
 
-    // Connect to shared cantin
+    // Connect to shared cantin with canonical ID
+    const canonicalId = getCanonicalCantinId(cleanCode);
     const joinedCantin: CantinProfile = {
-      id: `cantin_shared_${cleanCode.replace(/[^A-Z0-9]/g, '')}`,
+      id: canonicalId,
       name: `Team Cantin (${cleanCode})`,
       code: cleanCode,
       isShared: true,

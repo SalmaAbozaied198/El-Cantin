@@ -10,6 +10,7 @@ import {
   Platform,
   Alert,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -18,37 +19,78 @@ import { useData } from '../context/DataContext';
 import { useLanguage } from '../context/LanguageContext';
 import { UserRole } from '../types';
 
+type ScreenMode = 'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD' | 'SELECT_CANTIN';
+
 export const WelcomeIdentityModal: React.FC = () => {
-  const { currentUser, loginUser } = useAuth();
-  const { createCantin, joinCantinByCode } = useData();
+  const {
+    currentUser,
+    signInWithFirebase,
+    signUpWithFirebase,
+    resetPassword,
+  } = useAuth();
+  const { allCantins, switchCantin, createCantin, joinCantinByCode } = useData();
   const { t, isRTL, language, toggleLanguage } = useLanguage();
 
+  const [mode, setMode] = useState<ScreenMode>('LOGIN');
+
+  // Login & Register Form fields
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState<UserRole>('admin');
+
+  // Cantin Creation / Join fields for new registrations
   const [cantinTab, setCantinTab] = useState<'CREATE' | 'JOIN'>('CREATE');
   const [cantinName, setCantinName] = useState('');
   const [isSharedMode, setIsSharedMode] = useState(true);
   const [cantinCode, setCantinCode] = useState('');
+
   const [submitting, setSubmitting] = useState(false);
 
-  // If user is already logged in, do not show the modal
-  if (currentUser) return null;
+  // If user is logged in and not in middle of multi-cantin selection, hide modal
+  if (currentUser && mode !== 'SELECT_CANTIN') return null;
 
-  const handleComplete = async () => {
-    if (!name.trim()) {
+  const handleLogin = async () => {
+    if (!email.trim() || !password) {
+      Alert.alert(t('appName'), isRTL ? 'يرجى إدخال البريد الإلكتروني وكلمة المرور' : 'Please enter email and password.');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await signInWithFirebase(email.trim(), password);
+
+      // If user has multiple cantins available, allow choosing
+      if (allCantins && allCantins.length > 1) {
+        setMode('SELECT_CANTIN');
+      }
+    } catch (err: any) {
+      console.error('Login error:', err);
       Alert.alert(
-        t('appName'),
-        isRTL ? 'يرجى إدخال اسمك للاستمرار' : 'Please enter your name to proceed.'
+        isRTL ? 'خطأ في تسجيل الدخول' : 'Login Failed',
+        err.message?.includes('invalid-credential') || err.message?.includes('wrong-password')
+          ? (isRTL ? 'بيانات الاعتماد غير صحيحة، يرجى التأكد من البريد وكلمة المرور' : 'Invalid email or password.')
+          : (err.message || (isRTL ? 'حدث خطأ، حاول مجدداً' : 'An error occurred. Please try again.'))
       );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!name.trim() || !email.trim() || !password) {
+      Alert.alert(t('appName'), isRTL ? 'يرجى ملء جميع الحقول المطلوبة' : 'Please fill in all required fields.');
+      return;
+    }
+    if (password.length < 6) {
+      Alert.alert(t('appName'), isRTL ? 'كلمة المرور يجب أن تكون ٦ خانات على الأقل' : 'Password must be at least 6 characters.');
       return;
     }
 
     if (cantinTab === 'CREATE' && !cantinName.trim()) {
       Alert.alert(
         t('appName'),
-        isRTL
-          ? 'يرجى إدخال اسم الكانتين الجديد الخاص بك'
-          : 'Please enter a name for your new cantin.'
+        isRTL ? 'يرجى إدخال اسم الكانتين الجديد' : 'Please enter a name for your new cantin.'
       );
       return;
     }
@@ -56,26 +98,16 @@ export const WelcomeIdentityModal: React.FC = () => {
     if (cantinTab === 'JOIN' && !cantinCode.trim()) {
       Alert.alert(
         t('appName'),
-        isRTL
-          ? 'يرجى إدخال كود الكانتين للانضمام'
-          : 'Please enter the cantin code to join.'
+        isRTL ? 'يرجى إدخال كود الكانتين للانضمام' : 'Please enter the cantin code to join.'
       );
       return;
     }
 
     try {
       setSubmitting(true);
-      const newUser = {
-        id: `user_${Date.now()}`,
-        name: name.trim(),
-        email: `${name.trim().toLowerCase().replace(/\s+/g, '')}@cantin.local`,
-        role,
-      };
+      await signUpWithFirebase(name.trim(), email.trim(), password, role);
 
-      // 1. Log in the user
-      await loginUser(newUser);
-
-      // 2. Setup Cantin
+      // Setup Cantin
       if (cantinTab === 'CREATE') {
         await createCantin(cantinName.trim(), isSharedMode);
       } else {
@@ -86,16 +118,53 @@ export const WelcomeIdentityModal: React.FC = () => {
           return;
         }
       }
-    } catch (err) {
-      console.error('Failed to setup profile and cantin:', err);
-      Alert.alert('Error', 'Failed to complete setup. Please try again.');
+    } catch (err: any) {
+      console.error('Registration error:', err);
+      Alert.alert(
+        isRTL ? 'خطأ في إنشاء الحساب' : 'Registration Failed',
+        err.message?.includes('email-already-in-use')
+          ? (isRTL ? 'هذا البريد الإلكتروني مسجل بالفعل' : 'This email is already registered.')
+          : (err.message || (isRTL ? 'حدث خطأ، حاول مجدداً' : 'An error occurred. Please try again.'))
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert(t('appName'), isRTL ? 'يرجى إدخال بريدك الإلكتروني لاستلام رابط إعادة التعيين' : 'Please enter your email to receive a reset link.');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await resetPassword(email.trim());
+      Alert.alert(
+        isRTL ? 'تم الإرسال' : 'Reset Email Sent',
+        isRTL
+          ? 'تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني.'
+          : 'A password reset link has been sent to your email.'
+      );
+      setMode('LOGIN');
+    } catch (err: any) {
+      console.error('Reset password error:', err);
+      Alert.alert(
+        isRTL ? 'خطأ' : 'Error',
+        err.message || (isRTL ? 'فشل إرسال رابط إعادة التعيين' : 'Failed to send reset email.')
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSelectCantin = async (cantinId: string) => {
+    await switchCantin(cantinId);
+    setMode('LOGIN');
+  };
+
   return (
-    <Modal visible={!currentUser} animationType="fade" transparent={false}>
+    <Modal visible={!currentUser || mode === 'SELECT_CANTIN'} animationType="fade" transparent={false}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.container}
@@ -118,228 +187,359 @@ export const WelcomeIdentityModal: React.FC = () => {
 
           <Text style={styles.welcomeTitle}>{t('appName')}</Text>
           <Text style={styles.welcomeSubtitle}>
-            {isRTL
-              ? 'مرحباً بك! سجل اسمك وحدد كانتين للبدء'
-              : 'Welcome! Register your profile & set up your store'}
+            {mode === 'SELECT_CANTIN'
+              ? (isRTL ? 'اختر الكانتين الذي تريد الدخول إليه' : 'Choose the cantin you want to access')
+              : mode === 'FORGOT_PASSWORD'
+              ? (isRTL ? 'استعادة كلمة المرور عبر البريد الإلكتروني' : 'Recover your password via email')
+              : mode === 'REGISTER'
+              ? (isRTL ? 'إنشاء حساب جديد وإعداد المتجر' : 'Create an account & set up your store')
+              : (isRTL ? 'تسجيل الدخول إلى حسابك ومتابعة نشاطك' : 'Sign in to access your store and data')}
           </Text>
 
-          {/* Section 1: User Profile */}
-          <View style={styles.sectionCard}>
-            <Text style={[styles.sectionHeading, isRTL && { textAlign: 'right' }]}>
-              {isRTL ? '١. بيانات المستخدم' : '1. Your Profile'}
-            </Text>
-
-            {/* Name Input */}
-            <View style={styles.formGroup}>
-              <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
-                {isRTL ? 'اسمك (الذي سيظهر في العمليات والتقارير) *' : 'Your Name (Appears on receipts & logs) *'}
-              </Text>
-              <TextInput
-                style={[styles.input, isRTL && { textAlign: 'right' }]}
-                placeholder={isRTL ? 'مثال: سلمى، أحمد، عمر' : 'e.g. Salma, Ahmed, Omar'}
-                placeholderTextColor={colors.textMuted}
-                value={name}
-                onChangeText={setName}
-              />
-            </View>
-
-            {/* Role Selection */}
-            <View style={styles.formGroup}>
-              <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
-                {isRTL ? 'صلاحيتك / دورك:' : 'Your Role:'}
-              </Text>
-              <View style={[styles.roleRow, isRTL && styles.rowRtl]}>
-                <TouchableOpacity
-                  style={[styles.roleOption, role === 'admin' && styles.roleOptionActive]}
-                  onPress={() => setRole('admin')}
-                >
-                  <MaterialCommunityIcons
-                    name="shield-account"
-                    size={20}
-                    color={role === 'admin' ? colors.accentDark : colors.textSecondary}
-                  />
-                  <Text style={[styles.roleText, role === 'admin' && styles.roleTextActive]}>
-                    {t('storeAdminRole')}
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.roleOption, role === 'user' && styles.roleOptionActive]}
-                  onPress={() => setRole('user')}
-                >
-                  <MaterialCommunityIcons
-                    name="account-tie"
-                    size={20}
-                    color={role === 'user' ? colors.primaryDark : colors.textSecondary}
-                  />
-                  <Text style={[styles.roleText, role === 'user' && styles.roleTextActive]}>
-                    {t('staffRepRole')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-
-          {/* Section 2: Cantin Workspace Choice */}
-          <View style={styles.sectionCard}>
-            <Text style={[styles.sectionHeading, isRTL && { textAlign: 'right' }]}>
-              {isRTL ? '٢. إعداد الكانتين' : '2. Cantin Setup'}
-            </Text>
-
-            {/* Choice Tabs */}
+          {/* Mode Switcher Tabs for Login / Register */}
+          {mode !== 'SELECT_CANTIN' && mode !== 'FORGOT_PASSWORD' && (
             <View style={[styles.tabSelectorRow, isRTL && styles.rowRtl]}>
               <TouchableOpacity
-                style={[styles.tabChoiceBtn, cantinTab === 'CREATE' && styles.tabChoiceBtnActive]}
-                onPress={() => setCantinTab('CREATE')}
+                style={[styles.tabChoiceBtn, mode === 'LOGIN' && styles.tabChoiceBtnActive]}
+                onPress={() => setMode('LOGIN')}
               >
-                <MaterialCommunityIcons
-                  name="store-plus"
-                  size={18}
-                  color={cantinTab === 'CREATE' ? colors.primaryDark : colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.tabChoiceText,
-                    cantinTab === 'CREATE' && styles.tabChoiceTextActive,
-                  ]}
-                >
-                  {isRTL ? 'إنشاء كانتين جديد' : 'Open New Cantin'}
+                <Text style={[styles.tabChoiceText, mode === 'LOGIN' && styles.tabChoiceTextActive]}>
+                  {isRTL ? 'تسجيل الدخول' : 'Sign In'}
                 </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.tabChoiceBtn, cantinTab === 'JOIN' && styles.tabChoiceBtnActive]}
-                onPress={() => setCantinTab('JOIN')}
+                style={[styles.tabChoiceBtn, mode === 'REGISTER' && styles.tabChoiceBtnActive]}
+                onPress={() => setMode('REGISTER')}
               >
-                <MaterialCommunityIcons
-                  name="qrcode-scan"
-                  size={18}
-                  color={cantinTab === 'JOIN' ? colors.primaryDark : colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.tabChoiceText,
-                    cantinTab === 'JOIN' && styles.tabChoiceTextActive,
-                  ]}
-                >
-                  {isRTL ? 'انضمام برمز كود' : 'Join with Code'}
+                <Text style={[styles.tabChoiceText, mode === 'REGISTER' && styles.tabChoiceTextActive]}>
+                  {isRTL ? 'حساب جديد' : 'Register'}
                 </Text>
               </TouchableOpacity>
             </View>
+          )}
 
-            {/* Tab Body: Create New Cantin */}
-            {cantinTab === 'CREATE' ? (
-              <View>
+          {/* VIEW: SELECT CANTIN */}
+          {mode === 'SELECT_CANTIN' && (
+            <View style={styles.sectionCard}>
+              <Text style={[styles.sectionHeading, isRTL && { textAlign: 'right' }]}>
+                {isRTL ? 'المتاجر والكانتينات المشتركة' : 'Available Cantins'}
+              </Text>
+              {allCantins.map((cantin) => (
+                <TouchableOpacity
+                  key={cantin.id}
+                  style={styles.cantinOptionItem}
+                  onPress={() => handleSelectCantin(cantin.id)}
+                >
+                  <MaterialCommunityIcons name="storefront" size={24} color={colors.primary} />
+                  <View style={{ flex: 1, marginHorizontal: 10 }}>
+                    <Text style={styles.cantinOptionTitle}>{cantin.name}</Text>
+                    <Text style={styles.cantinOptionCode}>Code: {cantin.code}</Text>
+                  </View>
+                  <MaterialCommunityIcons
+                    name={isRTL ? 'chevron-left' : 'chevron-right'}
+                    size={20}
+                    color={colors.textSecondary}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* VIEW: FORGOT PASSWORD */}
+          {mode === 'FORGOT_PASSWORD' && (
+            <View style={styles.sectionCard}>
+              <Text style={[styles.sectionHeading, isRTL && { textAlign: 'right' }]}>
+                {isRTL ? 'استعادة كلمة المرور' : 'Password Reset'}
+              </Text>
+              <Text style={[styles.hintText, { marginBottom: 12 }, isRTL && { textAlign: 'right' }]}>
+                {isRTL
+                  ? 'أدخل بريدك الإلكتروني المسجل، وسنرسل لك رابطاً لإعادة تعيين كلمة المرور فوراً.'
+                  : 'Enter your registered email address and we will send you a password reset link.'}
+              </Text>
+
+              <View style={styles.formGroup}>
+                <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                  {isRTL ? 'البريد الإلكتروني *' : 'Email Address *'}
+                </Text>
+                <TextInput
+                  style={[styles.input, isRTL && { textAlign: 'right' }]}
+                  placeholder="name@example.com"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  value={email}
+                  onChangeText={setEmail}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
+                onPress={handleForgotPassword}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color={colors.white} />
+                ) : (
+                  <Text style={styles.submitBtnText}>
+                    {isRTL ? 'إرسال رابط الاستعادة' : 'Send Reset Link'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{ marginTop: 16, alignItems: 'center' }}
+                onPress={() => setMode('LOGIN')}
+              >
+                <Text style={styles.linkText}>
+                  {isRTL ? 'العودة لتسجيل الدخول' : 'Back to Sign In'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* VIEW: LOGIN */}
+          {mode === 'LOGIN' && (
+            <View style={styles.sectionCard}>
+              <Text style={[styles.sectionHeading, isRTL && { textAlign: 'right' }]}>
+                {isRTL ? 'بيانات تسجيل الدخول' : 'Sign In Credentials'}
+              </Text>
+
+              <View style={styles.formGroup}>
+                <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                  {isRTL ? 'البريد الإلكتروني *' : 'Email Address *'}
+                </Text>
+                <TextInput
+                  style={[styles.input, isRTL && { textAlign: 'right' }]}
+                  placeholder="name@example.com"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  value={email}
+                  onChangeText={setEmail}
+                />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                  {isRTL ? 'كلمة المرور *' : 'Password *'}
+                </Text>
+                <TextInput
+                  style={[styles.input, isRTL && { textAlign: 'right' }]}
+                  placeholder="••••••••"
+                  placeholderTextColor={colors.textMuted}
+                  secureTextEntry
+                  value={password}
+                  onChangeText={setPassword}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={{ alignSelf: isRTL ? 'flex-start' : 'flex-end', marginBottom: 14 }}
+                onPress={() => setMode('FORGOT_PASSWORD')}
+              >
+                <Text style={styles.linkText}>
+                  {isRTL ? 'نسيت كلمة المرور؟' : 'Forgot Password?'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
+                onPress={handleLogin}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color={colors.white} />
+                ) : (
+                  <>
+                    <Text style={styles.submitBtnText}>
+                      {isRTL ? 'تسجيل الدخول' : 'Sign In'}
+                    </Text>
+                    <MaterialCommunityIcons
+                      name={isRTL ? 'arrow-left' : 'arrow-right'}
+                      size={20}
+                      color={colors.white}
+                      style={{ marginHorizontal: 6 }}
+                    />
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* VIEW: REGISTER */}
+          {mode === 'REGISTER' && (
+            <>
+              {/* Profile details */}
+              <View style={styles.sectionCard}>
+                <Text style={[styles.sectionHeading, isRTL && { textAlign: 'right' }]}>
+                  {isRTL ? '١. بيانات الحساب' : '1. Profile & Credentials'}
+                </Text>
+
                 <View style={styles.formGroup}>
                   <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
-                    {isRTL ? 'اسم الكانتين الخاص بك *' : 'Your Cantin Name *'}
+                    {isRTL ? 'اسم المستخدم *' : 'Your Name *'}
                   </Text>
                   <TextInput
                     style={[styles.input, isRTL && { textAlign: 'right' }]}
-                    placeholder={
-                      isRTL
-                        ? 'مثال: كانتين سلمى، كانتين كلية الهندسة'
-                        : "e.g. Salma's Cantin, Branch #1"
-                    }
+                    placeholder={isRTL ? 'مثال: سلمى، أحمد' : 'e.g. Salma, Ahmed'}
                     placeholderTextColor={colors.textMuted}
-                    value={cantinName}
-                    onChangeText={setCantinName}
+                    value={name}
+                    onChangeText={setName}
                   />
-                  <Text style={[styles.hintText, isRTL && { textAlign: 'right' }]}>
-                    {isRTL
-                      ? 'سيتم فتح كانتين جديد وفارغ باسمك لإضافة البضائع والمنافذ الخاصة بك.'
-                      : 'A fresh new store will be created for you with your own custom inventory.'}
-                  </Text>
                 </View>
 
-                {/* Mode toggle */}
                 <View style={styles.formGroup}>
                   <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
-                    {t('cantinModeLabel')}
+                    {isRTL ? 'البريد الإلكتروني *' : 'Email Address *'}
+                  </Text>
+                  <TextInput
+                    style={[styles.input, isRTL && { textAlign: 'right' }]}
+                    placeholder="name@example.com"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    value={email}
+                    onChangeText={setEmail}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                    {isRTL ? 'كلمة المرور (٦ خانات على الأقل) *' : 'Password (min 6 characters) *'}
+                  </Text>
+                  <TextInput
+                    style={[styles.input, isRTL && { textAlign: 'right' }]}
+                    placeholder="••••••••"
+                    placeholderTextColor={colors.textMuted}
+                    secureTextEntry
+                    value={password}
+                    onChangeText={setPassword}
+                  />
+                </View>
+
+                {/* Role Selection */}
+                <View style={styles.formGroup}>
+                  <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                    {isRTL ? 'صلاحيتك / دورك:' : 'Your Role:'}
                   </Text>
                   <View style={[styles.roleRow, isRTL && styles.rowRtl]}>
                     <TouchableOpacity
-                      style={[styles.roleOption, isSharedMode && styles.roleOptionActive]}
-                      onPress={() => setIsSharedMode(true)}
+                      style={[styles.roleOption, role === 'admin' && styles.roleOptionActive]}
+                      onPress={() => setRole('admin')}
                     >
                       <MaterialCommunityIcons
-                        name="account-group"
-                        size={18}
-                        color={isSharedMode ? colors.primaryDark : colors.textSecondary}
+                        name="shield-account"
+                        size={20}
+                        color={role === 'admin' ? colors.accentDark : colors.textSecondary}
                       />
-                      <Text style={[styles.roleText, isSharedMode && styles.roleTextActive]}>
-                        {isRTL ? 'مشترك (برمز كود)' : 'Shared (with Code)'}
+                      <Text style={[styles.roleText, role === 'admin' && styles.roleTextActive]}>
+                        {t('storeAdminRole')}
                       </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.roleOption, !isSharedMode && styles.roleOptionActive]}
-                      onPress={() => setIsSharedMode(false)}
+                      style={[styles.roleOption, role === 'user' && styles.roleOptionActive]}
+                      onPress={() => setRole('user')}
                     >
                       <MaterialCommunityIcons
-                        name="lock"
-                        size={18}
-                        color={!isSharedMode ? colors.primaryDark : colors.textSecondary}
+                        name="account-tie"
+                        size={20}
+                        color={role === 'user' ? colors.primaryDark : colors.textSecondary}
                       />
-                      <Text style={[styles.roleText, !isSharedMode && styles.roleTextActive]}>
-                        {isRTL ? 'خاص بالهاتف' : 'Private'}
+                      <Text style={[styles.roleText, role === 'user' && styles.roleTextActive]}>
+                        {t('staffRepRole')}
                       </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               </View>
-            ) : (
-              /* Tab Body: Join with Code */
-              <View>
-                <View style={styles.formGroup}>
-                  <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
-                    {isRTL ? 'كود الكانتين *' : 'Cantin Code *'}
-                  </Text>
-                  <TextInput
-                    style={[
-                      styles.input,
-                      { letterSpacing: 2, fontWeight: '800', textTransform: 'uppercase' },
-                      isRTL && { textAlign: 'right' },
-                    ]}
-                    placeholder="e.g. ELC-101"
-                    placeholderTextColor={colors.textMuted}
-                    autoCapitalize="characters"
-                    value={cantinCode}
-                    onChangeText={setCantinCode}
-                  />
-                  <Text style={[styles.hintText, isRTL && { textAlign: 'right' }]}>
-                    {isRTL
-                      ? 'أدخل كود الكانتين الذي شاركه معك المدير للاتصال بنفس المتجر'
-                      : 'Enter the code provided by the store manager to connect directly.'}
-                  </Text>
-                </View>
-              </View>
-            )}
-          </View>
 
-          {/* Submit Button */}
-          <TouchableOpacity
-            style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
-            onPress={handleComplete}
-            disabled={submitting}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.submitBtnText}>
-              {submitting
-                ? isRTL
-                  ? 'جاري التحميل...'
-                  : 'Setting up...'
-                : isRTL
-                ? 'دخول وبدء الاستخدام'
-                : 'Start Using App'}
-            </Text>
-            <MaterialCommunityIcons
-              name={isRTL ? 'arrow-left' : 'arrow-right'}
-              size={20}
-              color={colors.white}
-              style={{ marginHorizontal: 6 }}
-            />
-          </TouchableOpacity>
+              {/* Cantin Setup */}
+              <View style={styles.sectionCard}>
+                <Text style={[styles.sectionHeading, isRTL && { textAlign: 'right' }]}>
+                  {isRTL ? '٢. إعداد الكانتين' : '2. Cantin Setup'}
+                </Text>
+
+                <View style={[styles.tabSelectorRow, isRTL && styles.rowRtl]}>
+                  <TouchableOpacity
+                    style={[styles.tabChoiceBtn, cantinTab === 'CREATE' && styles.tabChoiceBtnActive]}
+                    onPress={() => setCantinTab('CREATE')}
+                  >
+                    <Text style={[styles.tabChoiceText, cantinTab === 'CREATE' && styles.tabChoiceTextActive]}>
+                      {isRTL ? 'إنشاء كانتين جديد' : 'Open New Cantin'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.tabChoiceBtn, cantinTab === 'JOIN' && styles.tabChoiceBtnActive]}
+                    onPress={() => setCantinTab('JOIN')}
+                  >
+                    <Text style={[styles.tabChoiceText, cantinTab === 'JOIN' && styles.tabChoiceTextActive]}>
+                      {isRTL ? 'انضمام برمز كود' : 'Join with Code'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {cantinTab === 'CREATE' ? (
+                  <View>
+                    <View style={styles.formGroup}>
+                      <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                        {isRTL ? 'اسم الكانتين الخاص بك *' : 'Your Cantin Name *'}
+                      </Text>
+                      <TextInput
+                        style={[styles.input, isRTL && { textAlign: 'right' }]}
+                        placeholder={isRTL ? 'مثال: كانتين سلمى، كانتين كلية الهندسة' : "e.g. Salma's Cantin"}
+                        placeholderTextColor={colors.textMuted}
+                        value={cantinName}
+                        onChangeText={setCantinName}
+                      />
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.formGroup}>
+                    <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                      {isRTL ? 'كود الكانتين *' : 'Cantin Code *'}
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        { letterSpacing: 2, fontWeight: '800', textTransform: 'uppercase' },
+                        isRTL && { textAlign: 'right' },
+                      ]}
+                      placeholder="e.g. ELC-101"
+                      placeholderTextColor={colors.textMuted}
+                      autoCapitalize="characters"
+                      value={cantinCode}
+                      onChangeText={setCantinCode}
+                    />
+                  </View>
+                )}
+              </View>
+
+              <TouchableOpacity
+                style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
+                onPress={handleRegister}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color={colors.white} />
+                ) : (
+                  <>
+                    <Text style={styles.submitBtnText}>
+                      {isRTL ? 'إنشاء الحساب وبدء الاستخدام' : 'Complete Registration'}
+                    </Text>
+                    <MaterialCommunityIcons
+                      name={isRTL ? 'arrow-left' : 'arrow-right'}
+                      size={20}
+                      color={colors.white}
+                      style={{ marginHorizontal: 6 }}
+                    />
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
 
           <View style={{ height: 40 }} />
         </ScrollView>
@@ -510,9 +710,8 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   hintText: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.textMuted,
-    marginTop: 4,
   },
   submitBtn: {
     flexDirection: 'row',
@@ -532,5 +731,27 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     color: colors.white,
+  },
+  linkText: {
+    fontSize: 13,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  cantinOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  cantinOptionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  cantinOptionCode: {
+    fontSize: 12,
+    color: colors.textSecondary,
   },
 });
