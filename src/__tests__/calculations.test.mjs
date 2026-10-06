@@ -633,5 +633,161 @@ test('Cantin Ownership: Joining user with code always defaults to Staff and is N
   assert.strictEqual(isCantinAdminStrict(storeCantin, joiningUser), true);
 });
 
+// Logic under test: Quantity-based Coupons and Partial Redemption
+function createMarketCouponBatch(name, quantity, unitValue) {
+  const qty = Math.max(1, Math.floor(quantity));
+  return {
+    id: `cpn_${Date.now()}`,
+    name: name.trim(),
+    code: name.trim(),
+    unitValue,
+    totalQuantity: qty,
+    redeemedQuantity: 0,
+    value: unitValue * qty,
+    isRedeemed: false,
+  };
+}
+
+function redeemCouponPartial(market, couponId, quantityToRedeem = 1) {
+  const coupons = [...(market.coupons || [])];
+  const idx = coupons.findIndex((c) => c.id === couponId);
+  if (idx === -1) return { updatedMarket: market, deducted: 0 };
+
+  const coupon = coupons[idx];
+  const totalQty = coupon.totalQuantity || 1;
+  const currentRedeemed = coupon.redeemedQuantity || (coupon.isRedeemed ? totalQty : 0);
+  const available = Math.max(0, totalQty - currentRedeemed);
+  const qty = Math.min(quantityToRedeem, available);
+  if (qty <= 0) return { updatedMarket: market, deducted: 0 };
+
+  const unitVal = coupon.unitValue || coupon.value;
+  const deduction = qty * unitVal;
+  const newRedeemedQty = currentRedeemed + qty;
+
+  coupons[idx] = {
+    ...coupon,
+    redeemedQuantity: newRedeemedQty,
+    isRedeemed: newRedeemedQty >= totalQty,
+  };
+
+  return {
+    updatedMarket: {
+      ...market,
+      currentDebt: Math.max(0, market.currentDebt - deduction),
+      totalCouponsRedeemed: (market.totalCouponsRedeemed || 0) + deduction,
+      coupons,
+    },
+    deducted: deduction,
+  };
+}
+
+function undoCouponPartial(market, couponId, quantityToUndo = 1) {
+  const coupons = [...(market.coupons || [])];
+  const idx = coupons.findIndex((c) => c.id === couponId);
+  if (idx === -1) return { updatedMarket: market, restored: 0 };
+
+  const coupon = coupons[idx];
+  const totalQty = coupon.totalQuantity || 1;
+  const currentRedeemed = coupon.redeemedQuantity || (coupon.isRedeemed ? totalQty : 0);
+  const qty = Math.min(quantityToUndo, currentRedeemed);
+  if (qty <= 0) return { updatedMarket: market, restored: 0 };
+
+  const unitVal = coupon.unitValue || coupon.value;
+  const restoreAmount = qty * unitVal;
+  const newRedeemedQty = currentRedeemed - qty;
+
+  coupons[idx] = {
+    ...coupon,
+    redeemedQuantity: newRedeemedQty,
+    isRedeemed: newRedeemedQty >= totalQty,
+  };
+
+  return {
+    updatedMarket: {
+      ...market,
+      currentDebt: market.currentDebt + restoreAmount,
+      totalCouponsRedeemed: Math.max(0, (market.totalCouponsRedeemed || 0) - restoreAmount),
+      coupons,
+    },
+    restored: restoreAmount,
+  };
+}
+
+test('Coupons: Created with Name, Quantity, and Unit Value correctly computes total initial value', () => {
+  const coupon = createMarketCouponBatch('Meal Voucher', 10, 50);
+
+  assert.strictEqual(coupon.name, 'Meal Voucher');
+  assert.strictEqual(coupon.totalQuantity, 10);
+  assert.strictEqual(coupon.unitValue, 50);
+  assert.strictEqual(coupon.value, 500);
+  assert.strictEqual(coupon.redeemedQuantity, 0);
+  assert.strictEqual(coupon.isRedeemed, false);
+});
+
+test('Coupons: Partial redemption of 1 coupon out of 10 deducts only 1 coupon value and preserves remaining 9', () => {
+  const coupon = createMarketCouponBatch('Meal Voucher', 10, 50);
+  coupon.id = 'cpn_1';
+
+  let market = {
+    id: 'm1',
+    name: 'Kiosk A',
+    currentDebt: 1000,
+    totalCouponsRedeemed: 0,
+    coupons: [coupon],
+  };
+
+  // Step 1: User redeems just ONE coupon (50 EGP)
+  const step1 = redeemCouponPartial(market, 'cpn_1', 1);
+  market = step1.updatedMarket;
+
+  assert.strictEqual(step1.deducted, 50);
+  assert.strictEqual(market.currentDebt, 950);
+  assert.strictEqual(market.totalCouponsRedeemed, 50);
+
+  const c1 = market.coupons[0];
+  assert.strictEqual(c1.redeemedQuantity, 1);
+  assert.strictEqual(c1.totalQuantity - c1.redeemedQuantity, 9); // 9 remaining
+  assert.strictEqual(c1.isRedeemed, false); // NOT fully redeemed yet!
+
+  // Step 2: User later redeems 3 more coupons (150 EGP)
+  const step2 = redeemCouponPartial(market, 'cpn_1', 3);
+  market = step2.updatedMarket;
+
+  assert.strictEqual(step2.deducted, 150);
+  assert.strictEqual(market.currentDebt, 800);
+  assert.strictEqual(market.totalCouponsRedeemed, 200);
+
+  const c2 = market.coupons[0];
+  assert.strictEqual(c2.redeemedQuantity, 4);
+  assert.strictEqual(c2.totalQuantity - c2.redeemedQuantity, 6); // 6 remaining
+  assert.strictEqual(c2.isRedeemed, false);
+
+  // Step 3: User redeems remaining 6 coupons (300 EGP)
+  const step3 = redeemCouponPartial(market, 'cpn_1', 6);
+  market = step3.updatedMarket;
+
+  assert.strictEqual(step3.deducted, 300);
+  assert.strictEqual(market.currentDebt, 500);
+  assert.strictEqual(market.totalCouponsRedeemed, 500);
+
+  const c3 = market.coupons[0];
+  assert.strictEqual(c3.redeemedQuantity, 10);
+  assert.strictEqual(c3.totalQuantity - c3.redeemedQuantity, 0); // 0 remaining
+  assert.strictEqual(c3.isRedeemed, true); // NOW fully redeemed!
+
+  // Step 4: Undo 2 coupons (restores 100 EGP to debt)
+  const step4 = undoCouponPartial(market, 'cpn_1', 2);
+  market = step4.updatedMarket;
+
+  assert.strictEqual(step4.restored, 100);
+  assert.strictEqual(market.currentDebt, 600);
+  assert.strictEqual(market.totalCouponsRedeemed, 400);
+
+  const c4 = market.coupons[0];
+  assert.strictEqual(c4.redeemedQuantity, 8);
+  assert.strictEqual(c4.totalQuantity - c4.redeemedQuantity, 2); // 2 remaining again
+  assert.strictEqual(c4.isRedeemed, false);
+});
+
 
 

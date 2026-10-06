@@ -30,12 +30,16 @@ export interface InventoryItem {
 
 export interface MarketCoupon {
   id: string;
-  code: string;            // e.g. "CPN-01", "Kiosk Coupon #1"
-  value: number;           // Face value of money (e.g. 50.00 EGP)
-  isRedeemed: boolean;     // Whether it has been checked/redeemed
-  redeemedAt?: string;     // ISO timestamp when redeemed
-  redeemedBy?: string;     // User who checked/redeemed it
-  note?: string;           // Optional note
+  name: string;             // Coupon Name / Title (اسم الكوبون)
+  code: string;             // Reference / Code (كود / رمز الكوبون)
+  unitValue: number;        // Face value of money per single coupon (قيمة الكوبون الواحد)
+  totalQuantity: number;    // Total number of coupons issued (إجمالي عدد الكوبونات)
+  redeemedQuantity: number; // Number of coupons redeemed (عدد الكوبونات المصروفة)
+  value: number;            // Total money value (unitValue * totalQuantity)
+  isRedeemed: boolean;      // Whether all coupons have been redeemed
+  redeemedAt?: string;      // Last redeemed timestamp
+  redeemedBy?: string;      // Last redeemed by user
+  note?: string;            // Optional note
   createdAt: string;
 }
 

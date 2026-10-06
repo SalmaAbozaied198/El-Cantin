@@ -31,6 +31,8 @@ export const SubMarketsScreen: React.FC = () => {
     deleteSubMarket,
     toggleMarketCoupons,
     addMarketCoupon,
+    redeemMarketCoupons,
+    undoRedeemMarketCoupons,
     toggleCouponRedemption,
     deleteMarketCoupon,
     transferGoodsValue,
@@ -370,6 +372,8 @@ export const SubMarketsScreen: React.FC = () => {
           setMarketForCoupons(null);
         }}
         onAddCoupon={addMarketCoupon}
+        onRedeemCoupons={redeemMarketCoupons}
+        onUndoRedeemCoupons={undoRedeemMarketCoupons}
         onToggleRedemption={toggleCouponRedemption}
         onDeleteCoupon={deleteMarketCoupon}
       />
