@@ -64,6 +64,16 @@ export const CantinSwitcherModal: React.FC<CantinSwitcherModalProps> = ({
       Alert.alert(t('deleteCantin'), t('cannotDeleteOnlyCantin'));
       return;
     }
+
+    if (Platform.OS === 'web') {
+      const msg = t('deleteCantinConfirm').replace('{name}', cantin.name);
+      const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+      if (confirmed) {
+        deleteCantin(cantin.id);
+      }
+      return;
+    }
+
     Alert.alert(
       t('deleteCantin'),
       t('deleteCantinConfirm').replace('{name}', cantin.name),

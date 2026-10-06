@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
+  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -45,6 +46,16 @@ export const MainStoreScreen: React.FC = () => {
       Alert.alert(t('permissionDenied'), t('onlyAdminsCanModify'));
       return;
     }
+
+    if (Platform.OS === 'web') {
+      const msg = `${t('confirmDeleteMsg')} "${item.name}"?`;
+      const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+      if (confirmed) {
+        deleteInventoryItem(item.id);
+      }
+      return;
+    }
+
     Alert.alert(
       t('confirmDelete'),
       `${t('confirmDeleteMsg')} "${item.name}"?`,

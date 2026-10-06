@@ -691,12 +691,22 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
 
   const handleToggleRedeem = (coupon: MarketCoupon) => {
     if (!coupon.isRedeemed) {
+      const msg = t('markAsRedeemedPrompt')
+        .replace('{code}', coupon.code)
+        .replace('{amount}', coupon.value.toLocaleString())
+        .replace('{currency}', t('currency'));
+
+      if (Platform.OS === 'web') {
+        const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+        if (confirmed) {
+          onToggleRedemption(market.id, coupon.id);
+        }
+        return;
+      }
+
       Alert.alert(
         t('redeemAction'),
-        t('markAsRedeemedPrompt')
-          .replace('{code}', coupon.code)
-          .replace('{amount}', coupon.value.toLocaleString())
-          .replace('{currency}', t('currency')),
+        msg,
         [
           { text: t('cancel'), style: 'cancel' },
           {
@@ -709,12 +719,22 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
         ]
       );
     } else {
+      const msg = t('undoRedemptionPrompt')
+        .replace('{code}', coupon.code)
+        .replace('{amount}', coupon.value.toLocaleString())
+        .replace('{currency}', t('currency'));
+
+      if (Platform.OS === 'web') {
+        const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+        if (confirmed) {
+          onToggleRedemption(market.id, coupon.id);
+        }
+        return;
+      }
+
       Alert.alert(
         t('undoRedemption'),
-        t('undoRedemptionPrompt')
-          .replace('{code}', coupon.code)
-          .replace('{amount}', coupon.value.toLocaleString())
-          .replace('{currency}', t('currency')),
+        msg,
         [
           { text: t('cancel'), style: 'cancel' },
           {
@@ -730,9 +750,19 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
   };
 
   const handleDelete = (coupon: MarketCoupon) => {
+    const msg = t('deleteCouponConfirm').replace('{code}', coupon.code);
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+      if (confirmed) {
+        onDeleteCoupon(market.id, coupon.id);
+      }
+      return;
+    }
+
     Alert.alert(
       t('delete'),
-      t('deleteCouponConfirm').replace('{code}', coupon.code),
+      msg,
       [
         { text: t('cancel'), style: 'cancel' },
         {

@@ -7,6 +7,7 @@ import {
   ScrollView,
   TextInput,
   Alert,
+  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -42,6 +43,14 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(t('logoutConfirm')) : true;
+      if (confirmed) {
+        logoutUser();
+      }
+      return;
+    }
+
     Alert.alert(
       t('logout'),
       t('logoutConfirm'),
@@ -63,6 +72,16 @@ export const SettingsScreen: React.FC = () => {
       Alert.alert(t('deleteUser'), t('cannotDeleteActiveUser'));
       return;
     }
+
+    if (Platform.OS === 'web') {
+      const msg = t('deleteUserConfirm').replace('{name}', u.name);
+      const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+      if (confirmed) {
+        deleteUser(u.id);
+      }
+      return;
+    }
+
     Alert.alert(
       t('deleteUser'),
       t('deleteUserConfirm').replace('{name}', u.name),
@@ -81,11 +100,21 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const handleClearMarkets = () => {
+    const msg = isRTL
+      ? 'هل أنت متأكد من مسح جميع المنافذ والبدء بقائمة جديدة فارغة؟'
+      : 'Are you sure you want to remove all sub-markets and start with an empty list to add your own markets?';
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+      if (confirmed) {
+        clearAllMarkets();
+      }
+      return;
+    }
+
     Alert.alert(
       t('clearAllMarkets'),
-      isRTL
-        ? 'هل أنت متأكد من مسح جميع المنافذ والبدء بقائمة جديدة فارغة؟'
-        : 'Are you sure you want to remove all sub-markets and start with an empty list to add your own markets?',
+      msg,
       [
         { text: t('cancel'), style: 'cancel' },
         {
@@ -101,11 +130,21 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const handleReset = () => {
+    const msg = isRTL
+      ? 'سيتم استعادة الأصناف النموذجية ومسح المنافذ'
+      : 'This will reset inventory to default and clear markets so you can add your own.';
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(msg) : true;
+      if (confirmed) {
+        resetToDemo();
+      }
+      return;
+    }
+
     Alert.alert(
       t('resetDefaultData'),
-      isRTL
-        ? 'سيتم استعادة الأصناف النموذجية ومسح المنافذ'
-        : 'This will reset inventory to default and clear markets so you can add your own.',
+      msg,
       [
         { text: t('cancel'), style: 'cancel' },
         {
@@ -121,6 +160,14 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const handleClearAllData = () => {
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(t('clearAllDataResetConfirm')) : true;
+      if (confirmed) {
+        clearAllAppData().then(() => logoutUser());
+      }
+      return;
+    }
+
     Alert.alert(
       t('clearAllDataReset'),
       t('clearAllDataResetConfirm'),

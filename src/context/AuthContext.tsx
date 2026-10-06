@@ -58,9 +58,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await StorageService.setCurrentUser(localUser);
           setCurrentUser(localUser);
         } else {
-          // If signed out of firebase, check if we have a locally stored current user session
-          const current = await StorageService.getCurrentUser();
-          setCurrentUser(current);
+          // Firebase reports signed out -> clear active session
+          await StorageService.setCurrentUser(null);
+          setCurrentUser(null);
         }
         setIsLoading(false);
       });
@@ -201,6 +201,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logoutUser = async () => {
+    await StorageService.setCurrentUser(null);
+    setCurrentUser(null);
     const { auth } = getFirebaseInstance();
     if (auth) {
       try {
@@ -209,8 +211,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Sign out error:', e);
       }
     }
-    await StorageService.setCurrentUser(null);
-    setCurrentUser(null);
   };
 
   return (
