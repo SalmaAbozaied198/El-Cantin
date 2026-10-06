@@ -6,7 +6,7 @@ import {
   onSnapshot,
 } from 'firebase/firestore';
 import { getFirebaseInstance, isFirebaseConfigured } from '../config/firebase';
-import { InventoryItem, SubMarket, Transaction, CantinProfile } from '../types';
+import { InventoryItem, SubMarket, Transaction, CantinProfile, StoreCouponItem } from '../types';
 
 export const FirebaseSyncService = {
   isAvailable(): boolean {
@@ -80,6 +80,7 @@ export const FirebaseSyncService = {
     try {
       await Promise.all([
         deleteDoc(doc(db, 'cantins', cantinId, 'data', 'inventory')),
+        deleteDoc(doc(db, 'cantins', cantinId, 'data', 'store_coupons')),
         deleteDoc(doc(db, 'cantins', cantinId, 'data', 'sub_markets')),
         deleteDoc(doc(db, 'cantins', cantinId, 'data', 'transactions')),
         deleteDoc(doc(db, 'cantins', cantinId, 'data', 'transferred')),
@@ -267,6 +268,50 @@ export const FirebaseSyncService = {
       await setDoc(docRef, { amount, updatedAt: new Date().toISOString() });
     } catch (e) {
       console.warn('Firebase push transferred error:', e);
+    }
+  },
+
+  // 5. STORE COUPONS SYNC (Option 2)
+  subscribeStoreCoupons(
+    cantinId: string,
+    onData: (coupons: StoreCouponItem[]) => void
+  ): (() => void) | null {
+    if (!this.isAvailable()) return null;
+    const { db } = getFirebaseInstance();
+    if (!db) return null;
+
+    try {
+      const docRef = doc(db, 'cantins', cantinId, 'data', 'store_coupons');
+      return onSnapshot(
+        docRef,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            if (data && Array.isArray(data.coupons)) {
+              onData(data.coupons);
+            }
+          }
+        },
+        (error) => {
+          console.warn('Firestore store_coupons listener error:', error);
+        }
+      );
+    } catch (e) {
+      console.warn('Firebase store_coupons listener error:', e);
+      return null;
+    }
+  },
+
+  async pushStoreCoupons(cantinId: string, coupons: StoreCouponItem[]): Promise<void> {
+    if (!this.isAvailable()) return;
+    const { db } = getFirebaseInstance();
+    if (!db) return;
+
+    try {
+      const docRef = doc(db, 'cantins', cantinId, 'data', 'store_coupons');
+      await setDoc(docRef, { coupons, updatedAt: new Date().toISOString() });
+    } catch (e) {
+      console.warn('Firebase push store coupons error:', e);
     }
   },
 };

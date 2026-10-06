@@ -58,7 +58,21 @@ export interface SubMarket {
   updatedAt: string;
 }
 
-export type TransactionType = 'TRANSFER_GOODS' | 'RECORD_GAIN' | 'REDEEM_COUPON';
+export type TransactionType = 'TRANSFER_GOODS' | 'RECORD_GAIN' | 'REDEEM_COUPON' | 'TRANSFER_COUPONS';
+
+export interface StoreCouponItem {
+  id: string;
+  name: string;             // Coupon name (اسم الكوبون)
+  unitValue: number;        // Face value per coupon (قيمة الكوبون)
+  totalQuantity: number;    // Total entered into store (إجمالي العدد المدخل بالمخزن)
+  inStockQuantity: number;  // Currently available in store (المتبقي المتاح بالمخزن)
+  transferredQuantity: number; // Distributed to sub-markets (المحول للمنافذ)
+  totalValue: number;       // totalQuantity * unitValue
+  inStockValue: number;     // inStockQuantity * unitValue
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Transaction {
   id: string;
@@ -103,9 +117,15 @@ export interface CantinProfile {
 }
 
 export interface MainStoreStats {
-  grossInventoryValue: number;    // Total cost of all cardboard boxes in the store
-  totalTransferredValue: number;  // Value transferred to sub markets
-  netAvailableValue: number;      // Store value after sub market transfers
+  grossInventoryValue: number;    // Goods only: Total cost of all cardboard boxes in the store
+  totalTransferredValue: number;  // Goods transferred to sub markets
+  netAvailableValue: number;      // Store goods value available
   totalCardboardCount: number;    // Total cardboard cartons in stock
   totalPiecesCount: number;       // Total pieces across all items
+  // Separate Coupon Assets
+  storeCouponsValue: number;      // Available coupons in Main Store
+  storeCouponsCount: number;      // Total count of available coupons in Main Store
+  transferredCouponsValue: number;// Coupons transferred to sub markets
+  // Grand Combined Total (Goods + Coupons combined without mixing balances)
+  totalCombinedStoreValue: number; // netAvailableValue + storeCouponsValue
 }

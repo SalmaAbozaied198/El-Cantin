@@ -1,5 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { InventoryItem, SubMarket, Transaction, MainStoreStats, CantinProfile, MarketCoupon } from '../types';
+import {
+  InventoryItem,
+  SubMarket,
+  Transaction,
+  MainStoreStats,
+  CantinProfile,
+  MarketCoupon,
+  StoreCouponItem,
+} from '../types';
 import { StorageService, formatDateTime, DEFAULT_CANTIN } from '../services/storage';
 import { FirebaseSyncService } from '../services/firebaseSync';
 import { useAuth } from './AuthContext';
@@ -8,6 +16,7 @@ interface DataContextType {
   activeCantin: CantinProfile;
   allCantins: CantinProfile[];
   inventory: InventoryItem[];
+  storeCoupons: StoreCouponItem[];
   subMarkets: SubMarket[];
   transactions: Transaction[];
   stats: MainStoreStats;
@@ -25,6 +34,9 @@ interface DataContextType {
   addInventoryItem: (item: Omit<InventoryItem, 'id' | 'piecesPerCardboard' | 'costPerCardboard' | 'totalPieces' | 'totalCost' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   updateInventoryItem: (id: string, item: Omit<InventoryItem, 'id' | 'piecesPerCardboard' | 'costPerCardboard' | 'totalPieces' | 'totalCost' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   deleteInventoryItem: (id: string) => Promise<void>;
+  addStoreCoupon: (name: string, quantity: number, unitValue: number, note?: string) => Promise<void>;
+  deleteStoreCoupon: (couponId: string) => Promise<void>;
+  transferStoreCouponsToMarket: (storeCouponId: string, subMarketId: string, quantity: number, note?: string) => Promise<boolean>;
   addSubMarket: (name: string, location?: string, phone?: string, hasCoupons?: boolean) => Promise<void>;
   deleteSubMarket: (subMarketId: string) => Promise<boolean>;
   toggleMarketCoupons: (subMarketId: string) => Promise<void>;
@@ -47,6 +59,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [activeCantin, setActiveCantin] = useState<CantinProfile>(DEFAULT_CANTIN);
   const [allCantins, setAllCantins] = useState<CantinProfile[]>([DEFAULT_CANTIN]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [storeCoupons, setStoreCoupons] = useState<StoreCouponItem[]>([]);
   const [subMarkets, setSubMarkets] = useState<SubMarket[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [totalTransferredValue, setTotalTransferredValue] = useState<number>(0);
@@ -86,13 +99,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     unsubscribersRef.current = [];
 
     // 2. Load cached local data
-    const [inv, markets, txs, transferred] = await Promise.all([
+    const [inv, storeCps, markets, txs, transferred] = await Promise.all([
       StorageService.getInventory(cantinId),
+      StorageService.getStoreCoupons(cantinId),
       StorageService.getSubMarkets(cantinId),
       StorageService.getTransactions(cantinId),
       StorageService.getTotalTransferred(cantinId),
     ]);
     setInventory(inv);
+    setStoreCoupons(storeCps);
     setSubMarkets(markets);
     setTransactions(txs);
     setTotalTransferredValue(transferred);
@@ -104,6 +119,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         StorageService.saveInventory(cantinId, cloudItems);
       });
       if (unsubInv) unsubscribersRef.current.push(unsubInv);
+
+      const unsubStoreCoupons = FirebaseSyncService.subscribeStoreCoupons(cantinId, (cloudCoupons) => {
+        setStoreCoupons(cloudCoupons);
+        StorageService.saveStoreCoupons(cantinId, cloudCoupons);
+      });
+      if (unsubStoreCoupons) unsubscribersRef.current.push(unsubStoreCoupons);
 
       const unsubSubs = FirebaseSyncService.subscribeSubMarkets(cantinId, (cloudMarkets) => {
         setSubMarkets(cloudMarkets);
@@ -233,12 +254,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const totalPiecesCount = inventory.reduce((sum, item) => sum + item.totalPieces, 0);
   const netAvailableValue = Math.max(0, grossInventoryValue - totalTransferredValue);
 
+  // Distinct Store Coupons Inventory
+  const storeCouponsValue = storeCoupons.reduce((sum, c) => sum + (c.inStockQuantity * c.unitValue), 0);
+  const storeCouponsCount = storeCoupons.reduce((sum, c) => sum + c.inStockQuantity, 0);
+  const transferredCouponsValue = storeCoupons.reduce((sum, c) => sum + (c.transferredQuantity * c.unitValue), 0);
+
+  // Grand Combined Total (Goods + Coupons combined as requested)
+  const totalCombinedStoreValue = netAvailableValue + storeCouponsValue;
+
   const stats: MainStoreStats = {
     grossInventoryValue,
     totalTransferredValue,
     netAvailableValue,
     totalCardboardCount,
     totalPiecesCount,
+    storeCouponsValue,
+    storeCouponsCount,
+    transferredCouponsValue,
+    totalCombinedStoreValue,
   };
 
   // 1. Add Inventory Item
@@ -290,6 +323,144 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setInventory(updated);
     await StorageService.saveInventory(activeCantin.id, updated);
     await FirebaseSyncService.pushInventory(activeCantin.id, updated);
+  };
+
+  // 3b. Add Store Coupon Item (Purchasing / Stocking coupons in Main Store)
+  const addStoreCoupon = async (
+    name: string,
+    quantity: number,
+    unitValue: number,
+    note?: string
+  ): Promise<void> => {
+    const qty = Math.max(1, Math.floor(quantity));
+    const val = Math.max(0.1, unitValue);
+    const now = new Date().toISOString();
+    const newCoupon: StoreCouponItem = {
+      id: `scpn_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      name: name.trim(),
+      unitValue: val,
+      totalQuantity: qty,
+      inStockQuantity: qty,
+      transferredQuantity: 0,
+      totalValue: qty * val,
+      inStockValue: qty * val,
+      note: note?.trim() || undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const updated = [newCoupon, ...storeCoupons];
+    setStoreCoupons(updated);
+    await Promise.all([
+      StorageService.saveStoreCoupons(activeCantin.id, updated),
+      FirebaseSyncService.pushStoreCoupons(activeCantin.id, updated),
+    ]);
+  };
+
+  // 3c. Delete Store Coupon Item
+  const deleteStoreCoupon = async (couponId: string): Promise<void> => {
+    const updated = storeCoupons.filter((c) => c.id !== couponId);
+    setStoreCoupons(updated);
+    await Promise.all([
+      StorageService.saveStoreCoupons(activeCantin.id, updated),
+      FirebaseSyncService.pushStoreCoupons(activeCantin.id, updated),
+    ]);
+  };
+
+  // 3d. Transfer Store Coupons to Sub-Market
+  const transferStoreCouponsToMarket = async (
+    storeCouponId: string,
+    subMarketId: string,
+    quantity: number,
+    note?: string
+  ): Promise<boolean> => {
+    const couponIndex = storeCoupons.findIndex((c) => c.id === storeCouponId);
+    if (couponIndex === -1) return false;
+    const coupon = storeCoupons[couponIndex];
+
+    const qtyToTransfer = Math.min(Math.max(1, Math.floor(quantity)), coupon.inStockQuantity);
+    if (qtyToTransfer <= 0) return false;
+
+    const marketIndex = subMarkets.findIndex((m) => m.id === subMarketId);
+    if (marketIndex === -1) return false;
+    const market = subMarkets[marketIndex];
+
+    const transferValue = qtyToTransfer * coupon.unitValue;
+
+    // 1. Update store coupon stock
+    const newInStock = coupon.inStockQuantity - qtyToTransfer;
+    const newTransferred = coupon.transferredQuantity + qtyToTransfer;
+    const updatedCoupon: StoreCouponItem = {
+      ...coupon,
+      inStockQuantity: newInStock,
+      transferredQuantity: newTransferred,
+      inStockValue: newInStock * coupon.unitValue,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const updatedStoreCoupons = [...storeCoupons];
+    updatedStoreCoupons[couponIndex] = updatedCoupon;
+    setStoreCoupons(updatedStoreCoupons);
+
+    // 2. Add as market coupon to the target sub-market
+    const newMarketCoupon: MarketCoupon = {
+      id: `cpn_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      name: coupon.name,
+      code: coupon.name,
+      unitValue: coupon.unitValue,
+      totalQuantity: qtyToTransfer,
+      redeemedQuantity: 0,
+      value: transferValue,
+      isRedeemed: false,
+      note: note?.trim() || `Transferred from Store Stock`,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedMarketCoupons = [...(market.coupons || []), newMarketCoupon];
+    const updatedMarkets = [...subMarkets];
+    updatedMarkets[marketIndex] = {
+      ...market,
+      hasCoupons: true,
+      coupons: updatedMarketCoupons,
+      updatedAt: new Date().toISOString(),
+    };
+    setSubMarkets(updatedMarkets);
+
+    // 3. Record transaction
+    const dt = formatDateTime(new Date());
+    const newTx: Transaction = {
+      id: `tx_${Date.now()}`,
+      subMarketId: market.id,
+      subMarketName: market.name,
+      type: 'TRANSFER_COUPONS',
+      amount: transferValue,
+      couponCode: coupon.name,
+      couponUnitValue: coupon.unitValue,
+      couponQuantity: qtyToTransfer,
+      previousBalance: market.currentDebt,
+      newBalance: market.currentDebt,
+      timestamp: dt.iso,
+      formattedDate: dt.date,
+      formattedTime: dt.time,
+      userId: currentUser?.id || 'admin',
+      userName: currentUser?.name || 'Admin',
+      userRole: currentUser?.role || 'admin',
+      note: `Transferred ${qtyToTransfer}x "${coupon.name}" coupons (${transferValue} EGP) from store to ${market.name}`,
+    };
+    const updatedTxs = [newTx, ...transactions];
+    setTransactions(updatedTxs);
+
+    // 4. Save locally and to Firebase
+    await Promise.all([
+      StorageService.saveStoreCoupons(activeCantin.id, updatedStoreCoupons),
+      StorageService.saveSubMarkets(activeCantin.id, updatedMarkets),
+      StorageService.saveTransactions(activeCantin.id, updatedTxs),
+      FirebaseSyncService.pushStoreCoupons(activeCantin.id, updatedStoreCoupons),
+      FirebaseSyncService.pushSubMarkets(activeCantin.id, updatedMarkets),
+      FirebaseSyncService.pushTransactions(activeCantin.id, updatedTxs),
+    ]);
+
+    return true;
   };
 
   // 4. Add Sub-Market
@@ -876,6 +1047,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAllCantins([]);
     setActiveCantin(DEFAULT_CANTIN);
     setInventory([]);
+    setStoreCoupons([]);
     setSubMarkets([]);
     setTransactions([]);
     setTotalTransferredValue(0);
@@ -908,6 +1080,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         activeCantin,
         allCantins,
         inventory,
+        storeCoupons,
         subMarkets,
         transactions,
         stats,
@@ -925,6 +1098,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addInventoryItem,
         updateInventoryItem,
         deleteInventoryItem,
+        addStoreCoupon,
+        deleteStoreCoupon,
+        transferStoreCouponsToMarket,
         addSubMarket,
         deleteSubMarket,
         toggleMarketCoupons,

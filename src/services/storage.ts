@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { InventoryItem, SubMarket, Transaction, User, CantinProfile } from '../types';
+import { InventoryItem, SubMarket, Transaction, User, CantinProfile, StoreCouponItem } from '../types';
 
 const STORAGE_KEYS = {
   USERS: '@el_cantin_users',
@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   ACTIVE_CANTIN_ID: '@el_cantin_active_id',
   INVENTORY_PREFIX: '@el_cantin_inv_',
   SUB_MARKETS_PREFIX: '@el_cantin_subs_',
+  STORE_COUPONS_PREFIX: '@el_cantin_store_coupons_',
   TRANSACTIONS_PREFIX: '@el_cantin_txs_',
   TOTAL_TRANSFERRED_PREFIX: '@el_cantin_transferred_',
 };
@@ -224,6 +225,7 @@ export const StorageService = {
     await Promise.all([
       AsyncStorage.removeItem(`${STORAGE_KEYS.INVENTORY_PREFIX}${cantinId}`),
       AsyncStorage.removeItem(`${STORAGE_KEYS.SUB_MARKETS_PREFIX}${cantinId}`),
+      AsyncStorage.removeItem(`${STORAGE_KEYS.STORE_COUPONS_PREFIX}${cantinId}`),
       AsyncStorage.removeItem(`${STORAGE_KEYS.TRANSACTIONS_PREFIX}${cantinId}`),
       AsyncStorage.removeItem(`${STORAGE_KEYS.TOTAL_TRANSFERRED_PREFIX}${cantinId}`),
     ]);
@@ -435,10 +437,31 @@ export const StorageService = {
     await AsyncStorage.setItem(key, amount.toString());
   },
 
+  // ----------------------------------------------------
+  // STORE COUPONS INVENTORY (Option 2 - Dedicated Store Stock)
+  // ----------------------------------------------------
+  async getStoreCoupons(cantinId: string = 'default'): Promise<StoreCouponItem[]> {
+    try {
+      const key = `${STORAGE_KEYS.STORE_COUPONS_PREFIX}${cantinId}`;
+      const data = await AsyncStorage.getItem(key);
+      if (data) return JSON.parse(data);
+      await AsyncStorage.setItem(key, JSON.stringify([]));
+      return [];
+    } catch {
+      return [];
+    }
+  },
+
+  async saveStoreCoupons(cantinId: string = 'default', coupons: StoreCouponItem[]): Promise<void> {
+    const key = `${STORAGE_KEYS.STORE_COUPONS_PREFIX}${cantinId}`;
+    await AsyncStorage.setItem(key, JSON.stringify(coupons));
+  },
+
   // Reset demo
   async resetAllToDemo(cantinId: string = 'default'): Promise<void> {
     await Promise.all([
       this.saveInventory(cantinId, INITIAL_INVENTORY),
+      this.saveStoreCoupons(cantinId, []),
       this.saveSubMarkets(cantinId, []),
       this.saveTransactions(cantinId, []),
       this.saveTotalTransferred(cantinId, 0),

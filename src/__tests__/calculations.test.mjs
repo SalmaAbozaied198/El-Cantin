@@ -789,5 +789,119 @@ test('Coupons: Partial redemption of 1 coupon out of 10 deducts only 1 coupon va
   assert.strictEqual(c4.isRedeemed, false);
 });
 
+// Logic under test: Option 2 Dedicated Store Coupon Stock & Combined Valuation
+function calculateStoreValuations(goodsInventory, goodsTransferred, storeCoupons) {
+  const grossInventoryValue = goodsInventory.reduce((sum, item) => sum + item.totalCost, 0);
+  const netAvailableValue = Math.max(0, grossInventoryValue - goodsTransferred);
+
+  const storeCouponsValue = storeCoupons.reduce((sum, c) => sum + (c.inStockQuantity * c.unitValue), 0);
+  const storeCouponsCount = storeCoupons.reduce((sum, c) => sum + c.inStockQuantity, 0);
+  const transferredCouponsValue = storeCoupons.reduce((sum, c) => sum + (c.transferredQuantity * c.unitValue), 0);
+
+  // Grand Combined Value without mixing separate balances
+  const totalCombinedStoreValue = netAvailableValue + storeCouponsValue;
+
+  return {
+    grossInventoryValue,
+    netAvailableValue,
+    storeCouponsValue,
+    storeCouponsCount,
+    transferredCouponsValue,
+    totalCombinedStoreValue,
+  };
+}
+
+function transferStoreCouponToMarketLogic(storeCoupon, market, quantityToTransfer) {
+  const qty = Math.min(quantityToTransfer, storeCoupon.inStockQuantity);
+  const transferVal = qty * storeCoupon.unitValue;
+
+  const updatedStoreCoupon = {
+    ...storeCoupon,
+    inStockQuantity: storeCoupon.inStockQuantity - qty,
+    transferredQuantity: storeCoupon.transferredQuantity + qty,
+    inStockValue: (storeCoupon.inStockQuantity - qty) * storeCoupon.unitValue,
+  };
+
+  const newMarketCoupon = {
+    id: 'm_cpn_1',
+    name: storeCoupon.name,
+    code: storeCoupon.name,
+    unitValue: storeCoupon.unitValue,
+    totalQuantity: qty,
+    redeemedQuantity: 0,
+    value: transferVal,
+    isRedeemed: false,
+  };
+
+  const updatedMarket = {
+    ...market,
+    hasCoupons: true,
+    coupons: [...(market.coupons || []), newMarketCoupon],
+  };
+
+  return { updatedStoreCoupon, updatedMarket, transferVal };
+}
+
+test('Store Coupons: Separate Goods Money and Coupon Money combine into Grand Combined Value without mixing', () => {
+  const goods = [
+    { name: 'Molto', totalCost: 6000 },
+    { name: 'Indomie', totalCost: 4000 },
+  ];
+  const goodsTransferred = 2000; // 8000 EGP net goods remaining in store
+
+  const coupons = [
+    { name: 'VIP Voucher 50', unitValue: 50, totalQuantity: 100, inStockQuantity: 70, transferredQuantity: 30 },
+  ]; // in-stock: 70 * 50 = 3500 EGP
+
+  const valuation = calculateStoreValuations(goods, goodsTransferred, coupons);
+
+  // Goods money is distinct:
+  assert.strictEqual(valuation.grossInventoryValue, 10000);
+  assert.strictEqual(valuation.netAvailableValue, 8000);
+
+  // Coupon money is distinct:
+  assert.strictEqual(valuation.storeCouponsValue, 3500);
+  assert.strictEqual(valuation.storeCouponsCount, 70);
+  assert.strictEqual(valuation.transferredCouponsValue, 1500);
+
+  // Grand Combined Value combines both without mixing:
+  assert.strictEqual(valuation.totalCombinedStoreValue, 11500); // 8000 (goods) + 3500 (coupons)
+});
+
+test('Store Coupons: Transferring store coupons to kiosk updates store stock and populates kiosk coupons', () => {
+  const storeCoupon = {
+    id: 'scpn_1',
+    name: 'Meal Voucher',
+    unitValue: 50,
+    totalQuantity: 100,
+    inStockQuantity: 100,
+    transferredQuantity: 0,
+    totalValue: 5000,
+    inStockValue: 5000,
+  };
+
+  const kiosk = {
+    id: 'kiosk_1',
+    name: 'Kiosk North',
+    currentDebt: 500,
+    coupons: [],
+  };
+
+  // Transfer 20 coupons (1,000 EGP) to kiosk
+  const result = transferStoreCouponToMarketLogic(storeCoupon, kiosk, 20);
+
+  assert.strictEqual(result.transferVal, 1000);
+  assert.strictEqual(result.updatedStoreCoupon.inStockQuantity, 80);
+  assert.strictEqual(result.updatedStoreCoupon.transferredQuantity, 20);
+  assert.strictEqual(result.updatedStoreCoupon.inStockValue, 4000);
+
+  assert.strictEqual(result.updatedMarket.coupons.length, 1);
+  const receivedCoupon = result.updatedMarket.coupons[0];
+  assert.strictEqual(receivedCoupon.totalQuantity, 20);
+  assert.strictEqual(receivedCoupon.unitValue, 50);
+  assert.strictEqual(receivedCoupon.value, 1000);
+  assert.strictEqual(receivedCoupon.redeemedQuantity, 0);
+});
+
 
 
