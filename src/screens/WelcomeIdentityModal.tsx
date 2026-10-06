@@ -106,9 +106,11 @@ export const WelcomeIdentityModal: React.FC = () => {
       return;
     }
 
+    const finalRole: UserRole = cantinTab === 'JOIN' ? 'user' : 'admin';
+
     try {
       setSubmitting(true);
-      await signUpWithFirebase(name.trim(), email.trim(), password, role);
+      await signUpWithFirebase(name.trim(), email.trim(), password, finalRole);
 
       // Setup Cantin
       if (cantinTab === 'CREATE') {
@@ -451,40 +453,30 @@ export const WelcomeIdentityModal: React.FC = () => {
                   />
                 </View>
 
-                {/* Role Selection */}
+                {/* Role Notice */}
                 <View style={styles.formGroup}>
                   <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
-                    {isRTL ? 'صلاحيتك / دورك:' : 'Your Role:'}
+                    {isRTL ? 'صلاحيتك في هذا المتجر:' : 'Your Role in Store:'}
                   </Text>
-                  <View style={[styles.roleRow, isRTL && styles.rowRtl]}>
-                    <TouchableOpacity
-                      style={[styles.roleOption, role === 'admin' && styles.roleOptionActive]}
-                      onPress={() => setRole('admin')}
-                    >
-                      <MaterialCommunityIcons
-                        name="shield-account"
-                        size={20}
-                        color={role === 'admin' ? colors.accentDark : colors.textSecondary}
-                      />
-                      <Text style={[styles.roleText, role === 'admin' && styles.roleTextActive]}>
-                        {t('storeAdminRole')}
+                  {cantinTab === 'JOIN' ? (
+                    <View style={[styles.infoBannerBox, isRTL && styles.rowRtl]}>
+                      <MaterialCommunityIcons name="account-tie" size={18} color={colors.primaryDark} />
+                      <Text style={[styles.infoBannerText, isRTL && { textAlign: 'right' }]}>
+                        {isRTL
+                          ? 'ستنضم كـ (موظف بالمتجر). مدير المتجر هو الوحيد الذي يملك صلاحية ترقيتك لمدير.'
+                          : 'You will join as Store Staff. The Store Admin is the only one who can elevate your role to Admin.'}
                       </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.roleOption, role === 'user' && styles.roleOptionActive]}
-                      onPress={() => setRole('user')}
-                    >
-                      <MaterialCommunityIcons
-                        name="account-tie"
-                        size={20}
-                        color={role === 'user' ? colors.primaryDark : colors.textSecondary}
-                      />
-                      <Text style={[styles.roleText, role === 'user' && styles.roleTextActive]}>
-                        {t('staffRepRole')}
+                    </View>
+                  ) : (
+                    <View style={[styles.infoBannerBox, isRTL && styles.rowRtl]}>
+                      <MaterialCommunityIcons name="shield-account" size={18} color={colors.accentDark} />
+                      <Text style={[styles.infoBannerText, isRTL && { textAlign: 'right' }]}>
+                        {isRTL
+                          ? 'بصفتك منشئ هذا الكانتين، ستكون (مدير المتجر) بصلاحيات كاملة للتحكم بالأصناف وإدارة الموظفين.'
+                          : 'As the creator of this cantin, you will automatically be Store Admin with full permissions.'}
                       </Text>
-                    </TouchableOpacity>
-                  </View>
+                    </View>
+                  )}
                 </View>
               </View>
 
@@ -838,5 +830,23 @@ const styles = StyleSheet.create({
   cantinOptionCode: {
     fontSize: 12,
     color: colors.textSecondary,
+  },
+  infoBannerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  infoBannerText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginHorizontal: 8,
+    flex: 1,
+    lineHeight: 18,
   },
 });

@@ -34,6 +34,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   useEffect(() => {
+    // 1. Immediately restore local session on startup or refresh
+    const initSession = async () => {
+      try {
+        const storedUsers = await StorageService.getStoredUsers();
+        const current = await StorageService.getCurrentUser();
+        setUsers(storedUsers);
+        if (current) {
+          setCurrentUser(current);
+        }
+      } catch (err) {
+        console.error('Failed to load user data on startup:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initSession();
+
+    // 2. Connect Firebase Auth listener to keep cloud user in sync
     const { auth } = getFirebaseInstance();
     let unsubscribe: (() => void) | undefined;
 
@@ -58,14 +77,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await StorageService.setCurrentUser(localUser);
           setCurrentUser(localUser);
         } else {
-          // Firebase reports signed out -> clear active session
-          await StorageService.setCurrentUser(null);
-          setCurrentUser(null);
+          // If Firebase reports null (e.g. offline or email/password not in cloud), keep active local user
+          const localCurrent = await StorageService.getCurrentUser();
+          if (localCurrent) {
+            setCurrentUser(localCurrent);
+          }
         }
-        setIsLoading(false);
       });
-    } else {
-      loadUserData();
     }
 
     return () => {

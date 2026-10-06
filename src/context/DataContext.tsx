@@ -156,19 +156,52 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanCode = code.trim().toUpperCase();
     const joined = await StorageService.joinCantinByCode(cleanCode, currentUser);
     if (joined) {
-      // Check if Firestore has a more complete profile (like custom name)
+      // 1. Fetch cloud profile to preserve the store owner and existing collaborators
       const cloudProfile = await FirebaseSyncService.fetchCantinProfile(joined.id);
-      if (cloudProfile && cloudProfile.name) {
-        await StorageService.updateCantin(joined.id, { name: cloudProfile.name, ownerName: cloudProfile.ownerName });
-        joined.name = cloudProfile.name;
-        joined.ownerName = cloudProfile.ownerName;
+
+      const userEmail = currentUser?.email?.toLowerCase() || '';
+      const mergedMembers: Record<string, any> = {
+        ...(cloudProfile?.members || {}),
+        ...(joined.members || {}),
+      };
+
+      // 2. Joining users are strictly staff ('user') unless they are the owner
+      if (userEmail) {
+        const isOwner =
+          (cloudProfile?.ownerEmail && cloudProfile.ownerEmail.toLowerCase() === userEmail) ||
+          (cloudProfile?.creatorId &&
+            (cloudProfile.creatorId === currentUser?.id || cloudProfile.creatorId === currentUser?.firebaseUid));
+
+        const existingRole = cloudProfile?.members?.[userEmail]?.role;
+
+        mergedMembers[userEmail] = {
+          userId: currentUser?.id || currentUser?.firebaseUid || `user_${Date.now()}`,
+          name: currentUser?.name || 'Staff Member',
+          email: userEmail,
+          role: isOwner ? 'admin' : (existingRole || 'user'),
+          joinedAt: new Date().toISOString(),
+        };
       }
+
+      const mergedProfile: CantinProfile = {
+        ...joined,
+        name: cloudProfile?.name || joined.name,
+        ownerName: cloudProfile?.ownerName || joined.ownerName,
+        ownerEmail: cloudProfile?.ownerEmail || joined.ownerEmail,
+        creatorId: cloudProfile?.creatorId || joined.creatorId,
+        role: mergedMembers[userEmail]?.role || 'user',
+        members: mergedMembers,
+      };
+
+      // 3. Save locally and PUSH to Firestore so owner immediately sees this staff member!
+      await StorageService.updateCantin(joined.id, mergedProfile);
+      await FirebaseSyncService.pushCantinProfile(mergedProfile);
 
       const updatedList = await StorageService.getCantins();
       setAllCantins(updatedList);
-      setActiveCantin(joined);
+      setActiveCantin(mergedProfile);
       await loadStoreData(joined.id);
-      return joined;
+      return mergedProfile;
     }
     return null;
   };
@@ -691,19 +724,26 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isCantinAdmin = (): boolean => {
     if (!currentUser) return false;
     const userEmail = currentUser.email?.toLowerCase();
-    // 1. Is owner / creator
-    if (activeCantin.ownerEmail && userEmail && activeCantin.ownerEmail.toLowerCase() === userEmail) {
+    if (!userEmail) return false;
+
+    // 1. Is owner / creator of this cantin
+    if (activeCantin.ownerEmail && activeCantin.ownerEmail.toLowerCase() === userEmail) {
       return true;
     }
-    if (activeCantin.creatorId && (activeCantin.creatorId === currentUser.id || activeCantin.creatorId === currentUser.firebaseUid)) {
+    if (
+      activeCantin.creatorId &&
+      (activeCantin.creatorId === currentUser.id || activeCantin.creatorId === currentUser.firebaseUid)
+    ) {
       return true;
     }
-    // 2. Is in members list with admin role
-    if (userEmail && activeCantin.members?.[userEmail]?.role) {
+
+    // 2. Is in members list with explicit admin role
+    if (activeCantin.members && activeCantin.members[userEmail]) {
       return activeCantin.members[userEmail].role === 'admin';
     }
-    // 3. Fallback to activeCantin.role or currentUser.role
-    return activeCantin.role === 'admin' || currentUser.role === 'admin';
+
+    // 3. Joining users are strictly staff by default unless promoted by owner
+    return false;
   };
 
   const isCantinOwner = (cantin?: CantinProfile): boolean => {

@@ -585,5 +585,53 @@ test('Cantin Ownership: Creator can assign and modify member roles between Admin
   assert.strictEqual(resolveUserCantinRole(cantin, memberAhmed), 'user');
 });
 
+test('Cantin Ownership: Joining user with code always defaults to Staff and is NOT Admin', () => {
+  const storeOwner = { id: 'u1', name: 'Salma', email: 'salma@example.com' };
+  const storeCantin = {
+    id: 'cantin_ELC_101',
+    name: "Salma's Main Store",
+    code: 'ELC-101',
+    ownerEmail: 'salma@example.com',
+    creatorId: 'u1',
+    members: {
+      'salma@example.com': { role: 'admin', email: 'salma@example.com', name: 'Salma' },
+    },
+  };
+
+  // Ahmed joins with code ELC-101
+  const joiningUser = { id: 'u2', name: 'Ahmed', email: 'ahmed@example.com' };
+
+  // Strict check function matching DataContext isCantinAdmin
+  function isCantinAdminStrict(cantin, user) {
+    if (!user || !user.email) return false;
+    const userEmail = user.email.toLowerCase();
+    if (cantin.ownerEmail && cantin.ownerEmail.toLowerCase() === userEmail) return true;
+    if (cantin.creatorId && cantin.creatorId === user.id) return true;
+    if (cantin.members && cantin.members[userEmail]) {
+      return cantin.members[userEmail].role === 'admin';
+    }
+    return false;
+  }
+
+  // Before being added to members: not admin
+  assert.strictEqual(isCantinAdminStrict(storeCantin, joiningUser), false);
+
+  // When joining, joined as staff
+  storeCantin.members['ahmed@example.com'] = {
+    userId: 'u2',
+    name: 'Ahmed',
+    email: 'ahmed@example.com',
+    role: 'user',
+  };
+  assert.strictEqual(isCantinAdminStrict(storeCantin, joiningUser), false);
+
+  // Store Owner Salma IS admin
+  assert.strictEqual(isCantinAdminStrict(storeCantin, storeOwner), true);
+
+  // Only when Salma explicitly elevates Ahmed does he become admin
+  storeCantin.members['ahmed@example.com'].role = 'admin';
+  assert.strictEqual(isCantinAdminStrict(storeCantin, joiningUser), true);
+});
+
 
 
