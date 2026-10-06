@@ -49,16 +49,19 @@ export interface SubMarket {
   location?: string;
   phone?: string;
   hasCoupons?: boolean;        // Whether coupons are enabled for this sub-market
-  coupons?: MarketCoupon[];    // List of coupons assigned to this sub-market
-  currentDebt: number;        // Money on him (المبلغ المستحق عليه)
-  totalGoodsTaken: number;    // Cumulative goods value received
-  totalGainPaid: number;      // Cumulative payments / gain paid back
-  totalCouponsRedeemed?: number; // Cumulative coupons value redeemed
+  coupons?: MarketCoupon[];    // List of coupons assigned/transferred to this sub-market
+  currentDebt: number;        // Money on him for goods (المبلغ المستحق عليه للبضاعة)
+  totalGoodsTaken: number;    // Cumulative goods value received (إجمالي البضاعة المستلمة)
+  totalGainPaid: number;      // Cumulative payments / gain paid back (إجمالي توريد البضاعة)
+  totalCouponsTaken?: number; // Cumulative coupons value received from store (إجمالي الكوبونات المستلمة)
+  totalCouponsGained?: number;// Cumulative coupons value returned / gained (إجمالي الكوبونات الموردة)
+  totalCouponsRedeemed?: number; // Cumulative coupons value redeemed (backward compatibility)
+  currentCouponsBalance?: number; // Active coupons balance with the market (متبقي رصيد الكوبونات)
   createdAt: string;
   updatedAt: string;
 }
 
-export type TransactionType = 'TRANSFER_GOODS' | 'RECORD_GAIN' | 'REDEEM_COUPON' | 'TRANSFER_COUPONS';
+export type TransactionType = 'TRANSFER_GOODS' | 'RECORD_GAIN' | 'REDEEM_COUPON' | 'TRANSFER_COUPONS' | 'RECORD_COUPON_GAIN';
 
 export interface StoreCouponItem {
   id: string;

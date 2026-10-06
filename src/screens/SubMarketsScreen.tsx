@@ -19,6 +19,8 @@ import {
   AddSubMarketModal,
   TransferGoodsModal,
   RecordGainModal,
+  TransferCouponsModal,
+  RecordCouponGainModal,
   RedeemCouponModal,
   MarketCouponsModal,
 } from '../components/SubMarketModals';
@@ -26,6 +28,7 @@ import {
 export const SubMarketsScreen: React.FC = () => {
   const {
     subMarkets,
+    storeCoupons,
     stats,
     addSubMarket,
     deleteSubMarket,
@@ -37,6 +40,8 @@ export const SubMarketsScreen: React.FC = () => {
     deleteMarketCoupon,
     transferGoodsValue,
     recordSubMarketGain,
+    recordSubMarketCouponGain,
+    transferStoreCouponsToMarket,
     redeemCoupon,
     isAdmin,
   } = useData();
@@ -46,6 +51,8 @@ export const SubMarketsScreen: React.FC = () => {
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [transferModalVisible, setTransferModalVisible] = useState(false);
   const [gainModalVisible, setGainModalVisible] = useState(false);
+  const [transferCouponsModalVisible, setTransferCouponsModalVisible] = useState(false);
+  const [recordCouponGainModalVisible, setRecordCouponGainModalVisible] = useState(false);
   const [couponModalVisible, setCouponModalVisible] = useState(false);
   const [couponsModalVisible, setCouponsModalVisible] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<SubMarket | null>(null);
@@ -56,8 +63,19 @@ export const SubMarketsScreen: React.FC = () => {
     (market.location && market.location.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  const totalOutstandingDebt = subMarkets.reduce((sum, m) => sum + m.currentDebt, 0);
-  const totalGainsCollected = subMarkets.reduce((sum, m) => sum + m.totalGainPaid, 0);
+  const totalGoodsDebt = subMarkets.reduce((sum, m) => sum + (m.currentDebt || 0), 0);
+  const totalCouponsBalance = subMarkets.reduce(
+    (sum, m) => sum + (m.currentCouponsBalance ?? Math.max(0, (m.totalCouponsTaken || 0) - (m.totalCouponsGained || m.totalCouponsRedeemed || 0))),
+    0
+  );
+  const totalOutstandingDebt = totalGoodsDebt + totalCouponsBalance;
+
+  const totalGoodsGain = subMarkets.reduce((sum, m) => sum + (m.totalGainPaid || 0), 0);
+  const totalCouponsGain = subMarkets.reduce(
+    (sum, m) => sum + (m.totalCouponsGained || m.totalCouponsRedeemed || 0),
+    0
+  );
+  const totalGainsCollected = totalGoodsGain + totalCouponsGain;
 
   const handleOpenTransfer = (market: SubMarket) => {
     setSelectedMarket(market);
@@ -67,6 +85,16 @@ export const SubMarketsScreen: React.FC = () => {
   const handleOpenGain = (market: SubMarket) => {
     setSelectedMarket(market);
     setGainModalVisible(true);
+  };
+
+  const handleOpenTransferCoupons = (market: SubMarket) => {
+    setSelectedMarket(market);
+    setTransferCouponsModalVisible(true);
+  };
+
+  const handleOpenRecordCouponGain = (market: SubMarket) => {
+    setSelectedMarket(market);
+    setRecordCouponGainModalVisible(true);
   };
 
   const handleOpenCoupon = (market: SubMarket) => {
@@ -110,13 +138,24 @@ export const SubMarketsScreen: React.FC = () => {
   };
 
   const renderMarketItem = ({ item }: { item: SubMarket }) => {
-    const hasDebt = item.currentDebt > 0;
-    const hasRedeemedCoupons = (item.totalCouponsRedeemed || 0) > 0;
-    const activeCouponsCount = (item.coupons || []).filter((c) => !c.isRedeemed).length;
-    const totalCouponsCount = (item.coupons || []).length;
+    const couponsBal = item.currentCouponsBalance ?? Math.max(
+      0,
+      (item.totalCouponsTaken || 0) - (item.totalCouponsGained || item.totalCouponsRedeemed || 0)
+    );
+    const totalLiability = (item.currentDebt || 0) + couponsBal;
+    const hasLiability = totalLiability > 0;
+    const couponsTaken = item.totalCouponsTaken || 0;
+    const couponsGained = item.totalCouponsGained || item.totalCouponsRedeemed || 0;
+    const hasCouponsData = item.hasCoupons || couponsTaken > 0 || couponsBal > 0 || (item.coupons && item.coupons.length > 0);
+    const activeCouponsCount = (item.coupons || []).filter((c) => {
+      const tot = c.totalQuantity || 1;
+      const red = c.redeemedQuantity || (c.isRedeemed ? tot : 0);
+      return tot - red > 0;
+    }).length;
 
     return (
       <View style={styles.marketCard}>
+        {/* Top Header */}
         <View style={[styles.marketTop, isRTL && styles.rowRtl]}>
           <View style={[styles.marketLeft, isRTL && styles.rowRtl]}>
             <View style={styles.marketIconWrapper}>
@@ -125,14 +164,14 @@ export const SubMarketsScreen: React.FC = () => {
             <View style={{ alignItems: isRTL ? 'flex-end' : 'flex-start' }}>
               <View style={[styles.titleRow, isRTL && styles.rowRtl]}>
                 <Text style={styles.marketName}>{item.name}</Text>
-                {item.hasCoupons && (
+                {hasCouponsData && (
                   <TouchableOpacity
                     style={[styles.couponBadge, isRTL && styles.rowRtl]}
                     onPress={() => handleOpenManageCoupons(item)}
                   >
                     <MaterialCommunityIcons name="ticket-percent" size={11} color="#7C3AED" />
                     <Text style={styles.couponBadgeText}>
-                      {t('couponsBadge')} {totalCouponsCount > 0 ? `(${activeCouponsCount})` : ''}
+                      {t('couponsBadge')} {activeCouponsCount > 0 ? `(${activeCouponsCount})` : ''}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -147,24 +186,9 @@ export const SubMarketsScreen: React.FC = () => {
           </View>
 
           <View style={[styles.topRightActions, isRTL && styles.rowRtl]}>
-            {/* Toggle coupon indicator */}
-            <TouchableOpacity
-              style={[styles.couponToggleBtn, item.hasCoupons && styles.couponToggleBtnActive, isRTL && styles.rowRtl]}
-              onPress={() => toggleMarketCoupons(item.id)}
-            >
-              <MaterialCommunityIcons
-                name={item.hasCoupons ? "ticket-confirmation" : "ticket-outline"}
-                size={13}
-                color={item.hasCoupons ? "#7C3AED" : colors.textMuted}
-              />
-              <Text style={[styles.couponToggleText, item.hasCoupons && styles.couponToggleTextActive]}>
-                {item.hasCoupons ? t('couponsBadge') : `+ ${t('coupons')}`}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={[styles.debtTag, hasDebt ? styles.debtActiveTag : styles.debtSettledTag]}>
-              <Text style={[styles.debtTagText, hasDebt ? styles.debtActiveText : styles.debtSettledText]}>
-                {hasDebt ? t('activeDebt') : t('settled')}
+            <View style={[styles.debtTag, hasLiability ? styles.debtActiveTag : styles.debtSettledTag]}>
+              <Text style={[styles.debtTagText, hasLiability ? styles.debtActiveText : styles.debtSettledText]}>
+                {hasLiability ? t('activeDebt') : t('settled')}
               </Text>
             </View>
 
@@ -179,15 +203,20 @@ export const SubMarketsScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* Money on him (Current Debt Balance) */}
+        {/* Money on him (Total Combined Outstanding Liability) */}
         <View style={[styles.balanceSection, isRTL && { alignItems: 'flex-end' }]}>
-          <Text style={styles.balanceLabel}>{t('moneyOnHim')}</Text>
-          <Text style={[styles.balanceAmount, hasDebt ? styles.balanceDebt : styles.balanceClean]}>
-            {item.currentDebt.toLocaleString()} {t('currency')}
+          <Text style={styles.balanceLabel}>{t('totalMoneyOnHim')}</Text>
+          <Text style={[styles.balanceAmount, hasLiability ? styles.balanceDebt : styles.balanceClean]}>
+            {totalLiability.toLocaleString()} {t('currency')}
           </Text>
+          {(item.currentDebt > 0 || couponsBal > 0) && (
+            <Text style={styles.breakdownSubText}>
+              {t('goodsDebtLabel')}: {item.currentDebt.toLocaleString()} {t('currency')}  •  {t('couponsDebtLabel')}: {couponsBal.toLocaleString()} {t('currency')}
+            </Text>
+          )}
         </View>
 
-        {/* Aggregate Stats */}
+        {/* Parallel Activity Grid (Goods & Coupons) */}
         <View style={[styles.statsRow, isRTL && styles.rowRtl]}>
           <View style={[styles.statCol, isRTL && { alignItems: 'flex-end' }]}>
             <Text style={styles.statColLabel} numberOfLines={2}>{t('totalGoodsTaken')}</Text>
@@ -201,23 +230,32 @@ export const SubMarketsScreen: React.FC = () => {
               {item.totalGainPaid.toLocaleString()} {t('currency')}
             </Text>
           </View>
-          {hasRedeemedCoupons && (
-            <View style={[styles.statCol, isRTL && { alignItems: 'flex-end' }]}>
-              <Text style={styles.statColLabel} numberOfLines={2}>{t('totalCouponsRedeemed')}</Text>
-              <Text style={[styles.statColValue, { color: '#7C3AED' }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                {(item.totalCouponsRedeemed || 0).toLocaleString()} {t('currency')}
-              </Text>
-            </View>
+          {hasCouponsData && (
+            <>
+              <View style={[styles.statCol, isRTL && { alignItems: 'flex-end' }]}>
+                <Text style={styles.statColLabel} numberOfLines={2}>{t('totalCouponsTaken')}</Text>
+                <Text style={[styles.statColValue, { color: '#6D28D9' }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {couponsTaken.toLocaleString()} {t('currency')}
+                </Text>
+              </View>
+              <View style={[styles.statCol, isRTL && { alignItems: 'flex-end' }]}>
+                <Text style={styles.statColLabel} numberOfLines={2}>{t('totalCouponsGained')}</Text>
+                <Text style={[styles.statColValue, { color: colors.successText }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {couponsGained.toLocaleString()} {t('currency')}
+                </Text>
+              </View>
+            </>
           )}
         </View>
 
-        {/* Action Buttons: 2 Primary actions */}
-        <View style={[styles.actionsRow, isRTL && styles.rowRtl]}>
+        {/* Action Buttons: 2 Rows */}
+        {/* Row 1: Goods Actions */}
+        <View style={[styles.actionsRow, isRTL && styles.rowRtl, { marginBottom: 6 }]}>
           <TouchableOpacity
             style={[styles.actionBtn, styles.transferBtn]}
             onPress={() => handleOpenTransfer(item)}
           >
-            <MaterialCommunityIcons name="arrow-down-bold-circle-outline" size={16} color={colors.infoText} />
+            <MaterialCommunityIcons name="truck-delivery" size={16} color={colors.infoText} />
             <Text style={styles.transferBtnText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
               {t('transferGoodsValue')}
             </Text>
@@ -234,25 +272,48 @@ export const SubMarketsScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Dedicated Coupons Management Bar (Spacious and Never Overlapped) */}
-        {item.hasCoupons && (
+        {/* Row 2: Coupons Actions */}
+        <View style={[styles.actionsRow, isRTL && styles.rowRtl]}>
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.couponTransferBtn]}
+            onPress={() => handleOpenTransferCoupons(item)}
+          >
+            <MaterialCommunityIcons name="ticket-confirmation" size={16} color="#7C3AED" />
+            <Text style={styles.couponTransferBtnText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {t('transferCouponsBtn')}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.couponGainBtn]}
+            onPress={() => handleOpenRecordCouponGain(item)}
+          >
+            <MaterialCommunityIcons name="ticket-percent" size={16} color={colors.white} />
+            <Text style={styles.couponGainBtnText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {t('recordCouponGainBtn')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* View Coupons Breakdown Link */}
+        {hasCouponsData && (
           <TouchableOpacity
             style={[styles.couponManageFullBtn, isRTL && styles.rowRtl]}
             onPress={() => handleOpenManageCoupons(item)}
           >
             <View style={[styles.couponManageLeft, isRTL && styles.rowRtl]}>
-              <MaterialCommunityIcons name="ticket-percent" size={17} color="#7C3AED" />
+              <MaterialCommunityIcons name="layers-outline" size={16} color="#7C3AED" />
               <Text style={styles.couponManageTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
-                {t('marketCouponsTitle')}
+                {t('viewCouponsBtn')}
               </Text>
               <View style={styles.couponCountPill}>
                 <Text style={styles.couponCountPillText} numberOfLines={1}>
-                  {activeCouponsCount} {t('activeCouponsTab')}
+                  {couponsBal.toLocaleString()} {t('currency')} {isRTL ? 'متبقي' : 'rem.'}
                 </Text>
               </View>
             </View>
             <View style={[styles.couponManageRight, isRTL && styles.rowRtl]}>
-              <Text style={styles.couponManageActionText}>{t('manageCouponsBtn')}</Text>
+              <Text style={styles.couponManageActionText}>{isRTL ? 'تفاصيل' : 'Details'}</Text>
               <MaterialCommunityIcons name={isRTL ? "chevron-left" : "chevron-right"} size={16} color="#7C3AED" />
             </View>
           </TouchableOpacity>
@@ -353,6 +414,27 @@ export const SubMarketsScreen: React.FC = () => {
         onRecordGain={recordSubMarketGain}
       />
 
+      <TransferCouponsModal
+        visible={transferCouponsModalVisible}
+        onClose={() => {
+          setTransferCouponsModalVisible(false);
+          setSelectedMarket(null);
+        }}
+        market={selectedMarket}
+        storeCoupons={storeCoupons}
+        onTransfer={transferStoreCouponsToMarket}
+      />
+
+      <RecordCouponGainModal
+        visible={recordCouponGainModalVisible}
+        onClose={() => {
+          setRecordCouponGainModalVisible(false);
+          setSelectedMarket(null);
+        }}
+        market={selectedMarket}
+        onRecordCouponGain={recordSubMarketCouponGain}
+      />
+
       <RedeemCouponModal
         visible={couponModalVisible}
         onClose={() => {
@@ -370,6 +452,12 @@ export const SubMarketsScreen: React.FC = () => {
         onClose={() => {
           setCouponsModalVisible(false);
           setMarketForCoupons(null);
+        }}
+        onRecordCouponGain={recordSubMarketCouponGain}
+        onOpenTransferCoupons={() => {
+          if (marketForCoupons) {
+            handleOpenTransferCoupons(marketForCoupons);
+          }
         }}
         onAddCoupon={addMarketCoupon}
         onRedeemCoupons={redeemMarketCoupons}
@@ -666,6 +754,37 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#7C3AED',
     marginHorizontal: 3,
+  },
+  couponTransferBtn: {
+    backgroundColor: '#FAF5FF',
+    borderWidth: 1.5,
+    borderColor: '#DDD6FE',
+  },
+  couponTransferBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#7C3AED',
+    marginHorizontal: 3,
+  },
+  couponGainBtn: {
+    backgroundColor: '#4F46E5',
+    shadowColor: '#4F46E5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  couponGainBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.white,
+    marginHorizontal: 3,
+  },
+  breakdownSubText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 4,
+    fontWeight: '600',
   },
   couponManageFullBtn: {
     flexDirection: 'row',

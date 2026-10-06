@@ -47,6 +47,7 @@ interface DataContextType {
   deleteMarketCoupon: (subMarketId: string, couponId: string) => Promise<void>;
   transferGoodsValue: (subMarketId: string, amount: number, note?: string) => Promise<boolean>;
   recordSubMarketGain: (subMarketId: string, amount: number, note?: string) => Promise<boolean>;
+  recordSubMarketCouponGain: (subMarketId: string, amount: number, couponId?: string, quantity?: number, note?: string) => Promise<boolean>;
   redeemCoupon: (subMarketId: string, couponCode: string, unitValue: number, quantity: number, note?: string) => Promise<boolean>;
   clearAllMarkets: () => Promise<void>;
   resetToDemo: () => Promise<void>;
@@ -93,6 +94,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const normalizeMarkets = (rawMarkets: SubMarket[]): SubMarket[] => {
+    return (rawMarkets || []).map((m) => {
+      const coupons = m.coupons || [];
+      const couponsTaken = m.totalCouponsTaken ?? coupons.reduce((sum, c) => sum + (c.value || (c.unitValue * (c.totalQuantity || 1))), 0);
+      const couponsGained = m.totalCouponsGained ?? m.totalCouponsRedeemed ?? coupons.reduce((sum, c) => sum + ((c.redeemedQuantity || 0) * (c.unitValue || c.value)), 0);
+      const couponsBalance = m.currentCouponsBalance ?? Math.max(0, couponsTaken - couponsGained);
+      return {
+        ...m,
+        totalCouponsTaken: couponsTaken,
+        totalCouponsGained: couponsGained,
+        totalCouponsRedeemed: couponsGained,
+        currentCouponsBalance: couponsBalance,
+      };
+    });
+  };
+
   const loadStoreData = async (cantinId: string) => {
     // 1. Clean up any existing listeners
     unsubscribersRef.current.forEach((unsub) => unsub());
@@ -108,7 +125,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ]);
     setInventory(inv);
     setStoreCoupons(storeCps);
-    setSubMarkets(markets);
+    setSubMarkets(normalizeMarkets(markets));
     setTransactions(txs);
     setTotalTransferredValue(transferred);
 
@@ -127,8 +144,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (unsubStoreCoupons) unsubscribersRef.current.push(unsubStoreCoupons);
 
       const unsubSubs = FirebaseSyncService.subscribeSubMarkets(cantinId, (cloudMarkets) => {
-        setSubMarkets(cloudMarkets);
-        StorageService.saveSubMarkets(cantinId, cloudMarkets);
+        const normalized = normalizeMarkets(cloudMarkets);
+        setSubMarkets(normalized);
+        StorageService.saveSubMarkets(cantinId, normalized);
       });
       if (unsubSubs) unsubscribersRef.current.push(unsubSubs);
 
@@ -402,26 +420,52 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     updatedStoreCoupons[couponIndex] = updatedCoupon;
     setStoreCoupons(updatedStoreCoupons);
 
-    // 2. Add as market coupon to the target sub-market
-    const newMarketCoupon: MarketCoupon = {
-      id: `cpn_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      name: coupon.name,
-      code: coupon.name,
-      unitValue: coupon.unitValue,
-      totalQuantity: qtyToTransfer,
-      redeemedQuantity: 0,
-      value: transferValue,
-      isRedeemed: false,
-      note: note?.trim() || `Transferred from Store Stock`,
-      createdAt: new Date().toISOString(),
-    };
+    // 2. Add or consolidate market coupon in the target sub-market
+    const existingMarketCoupons = [...(market.coupons || [])];
+    const matchIdx = existingMarketCoupons.findIndex(
+      (c) => c.name.toLowerCase() === coupon.name.toLowerCase() && c.unitValue === coupon.unitValue
+    );
 
-    const updatedMarketCoupons = [...(market.coupons || []), newMarketCoupon];
+    if (matchIdx !== -1) {
+      const match = existingMarketCoupons[matchIdx];
+      const newTotalQty = (match.totalQuantity || 1) + qtyToTransfer;
+      existingMarketCoupons[matchIdx] = {
+        ...match,
+        totalQuantity: newTotalQty,
+        value: newTotalQty * match.unitValue,
+        isRedeemed: (match.redeemedQuantity || 0) >= newTotalQty,
+      };
+    } else {
+      const newMarketCoupon: MarketCoupon = {
+        id: `cpn_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        name: coupon.name,
+        code: coupon.name,
+        unitValue: coupon.unitValue,
+        totalQuantity: qtyToTransfer,
+        redeemedQuantity: 0,
+        value: transferValue,
+        isRedeemed: false,
+        note: note?.trim() || `Transferred from Store Stock`,
+        createdAt: new Date().toISOString(),
+      };
+      existingMarketCoupons.push(newMarketCoupon);
+    }
+
+    const prevCouponsTaken = market.totalCouponsTaken || 0;
+    const newCouponsTaken = prevCouponsTaken + transferValue;
+    const prevCouponsGained = market.totalCouponsGained || market.totalCouponsRedeemed || 0;
+    const prevCouponsBalance = market.currentCouponsBalance ?? Math.max(0, prevCouponsTaken - prevCouponsGained);
+    const newCouponsBalance = prevCouponsBalance + transferValue;
+
     const updatedMarkets = [...subMarkets];
     updatedMarkets[marketIndex] = {
       ...market,
       hasCoupons: true,
-      coupons: updatedMarketCoupons,
+      coupons: existingMarketCoupons,
+      totalCouponsTaken: newCouponsTaken,
+      totalCouponsGained: prevCouponsGained,
+      totalCouponsRedeemed: prevCouponsGained,
+      currentCouponsBalance: newCouponsBalance,
       updatedAt: new Date().toISOString(),
     };
     setSubMarkets(updatedMarkets);
@@ -437,8 +481,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       couponCode: coupon.name,
       couponUnitValue: coupon.unitValue,
       couponQuantity: qtyToTransfer,
-      previousBalance: market.currentDebt,
-      newBalance: market.currentDebt,
+      previousBalance: prevCouponsBalance,
+      newBalance: newCouponsBalance,
       timestamp: dt.iso,
       formattedDate: dt.date,
       formattedTime: dt.time,
@@ -662,6 +706,123 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       userName: currentUser?.name || 'Admin',
       userRole: currentUser?.role || 'admin',
       note: note || (cleanCode ? `Coupon redeemed: ${cleanCode} (${qty}x)` : `${qty} coupons redeemed`),
+    };
+
+    const updatedTxs = [newTx, ...transactions];
+
+    setSubMarkets(updatedMarkets);
+    setTransactions(updatedTxs);
+
+    await Promise.all([
+      StorageService.saveSubMarkets(activeCantin.id, updatedMarkets),
+      StorageService.saveTransactions(activeCantin.id, updatedTxs),
+      FirebaseSyncService.pushSubMarkets(activeCantin.id, updatedMarkets),
+      FirebaseSyncService.pushTransactions(activeCantin.id, updatedTxs),
+    ]);
+
+    return true;
+  };
+
+  // 6bb. Record Sub-Market Coupon Gain (when coupon value comes back from submarket)
+  // "when a cupon value comes back itis coming back similar to the way the goods is gained
+  // but the value will be subtracted from the cupons and it will be total cupons gained"
+  const recordSubMarketCouponGain = async (
+    subMarketId: string,
+    amount: number,
+    couponId?: string,
+    quantity?: number,
+    note?: string
+  ): Promise<boolean> => {
+    if (amount <= 0) return false;
+
+    const marketIndex = subMarkets.findIndex((m) => m.id === subMarketId);
+    if (marketIndex === -1) return false;
+
+    const market = subMarkets[marketIndex];
+    const prevCouponsBalance = market.currentCouponsBalance ?? Math.max(
+      0,
+      (market.totalCouponsTaken || 0) - (market.totalCouponsGained || market.totalCouponsRedeemed || 0)
+    );
+    const newCouponsBalance = Math.max(0, prevCouponsBalance - amount);
+
+    const prevCouponsGained = market.totalCouponsGained || market.totalCouponsRedeemed || 0;
+    const newCouponsGained = prevCouponsGained + amount;
+
+    // Update coupon items in market.coupons if specific coupon or general
+    const coupons = [...(market.coupons || [])];
+    let couponRefCode = '';
+    let couponUnitVal: number | undefined;
+    let couponQtyUsed: number | undefined = quantity;
+
+    if (couponId) {
+      const cIndex = coupons.findIndex((c) => c.id === couponId);
+      if (cIndex !== -1) {
+        const c = coupons[cIndex];
+        couponRefCode = c.name || c.code;
+        couponUnitVal = c.unitValue;
+        const currentRedeemed = c.redeemedQuantity || 0;
+        const qtyToAdd = quantity || Math.max(1, Math.round(amount / (c.unitValue || 1)));
+        const updatedRedeemed = Math.min(c.totalQuantity, currentRedeemed + qtyToAdd);
+        coupons[cIndex] = {
+          ...c,
+          redeemedQuantity: updatedRedeemed,
+          isRedeemed: updatedRedeemed >= c.totalQuantity,
+          redeemedAt: new Date().toISOString(),
+          redeemedBy: currentUser?.name || 'Staff',
+        };
+      }
+    } else {
+      let remainingDeduction = amount;
+      for (let i = 0; i < coupons.length && remainingDeduction > 0; i++) {
+        const c = coupons[i];
+        const currentRedeemed = c.redeemedQuantity || 0;
+        const unredeemedCount = Math.max(0, c.totalQuantity - currentRedeemed);
+        const unredeemedVal = unredeemedCount * c.unitValue;
+        if (unredeemedVal > 0) {
+          const deductVal = Math.min(remainingDeduction, unredeemedVal);
+          const deductCount = Math.ceil(deductVal / c.unitValue);
+          const newRedeemed = Math.min(c.totalQuantity, currentRedeemed + deductCount);
+          coupons[i] = {
+            ...c,
+            redeemedQuantity: newRedeemed,
+            isRedeemed: newRedeemed >= c.totalQuantity,
+            redeemedAt: new Date().toISOString(),
+            redeemedBy: currentUser?.name || 'Staff',
+          };
+          remainingDeduction -= deductVal;
+        }
+      }
+    }
+
+    const updatedMarkets = [...subMarkets];
+    updatedMarkets[marketIndex] = {
+      ...market,
+      currentCouponsBalance: newCouponsBalance,
+      totalCouponsGained: newCouponsGained,
+      totalCouponsRedeemed: newCouponsGained,
+      coupons,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const dt = formatDateTime(new Date());
+    const newTx: Transaction = {
+      id: `tx_${Date.now()}`,
+      subMarketId: market.id,
+      subMarketName: market.name,
+      type: 'REDEEM_COUPON',
+      amount,
+      couponCode: couponRefCode || undefined,
+      couponUnitValue: couponUnitVal,
+      couponQuantity: couponQtyUsed,
+      previousBalance: prevCouponsBalance,
+      newBalance: newCouponsBalance,
+      timestamp: dt.iso,
+      formattedDate: dt.date,
+      formattedTime: dt.time,
+      userId: currentUser?.id || 'admin',
+      userName: currentUser?.name || 'Admin',
+      userRole: currentUser?.role || 'admin',
+      note: note || (couponRefCode ? `Coupon gain returned: ${couponRefCode}` : 'Coupon value gained / returned'),
     };
 
     const updatedTxs = [newTx, ...transactions];
@@ -1111,6 +1272,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteMarketCoupon,
         transferGoodsValue,
         recordSubMarketGain,
+        recordSubMarketCouponGain,
         redeemCoupon,
         clearAllMarkets,
         resetToDemo,

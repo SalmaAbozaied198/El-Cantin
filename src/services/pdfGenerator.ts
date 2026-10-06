@@ -49,7 +49,7 @@ export const PdfReportService = {
       return true;
     });
 
-    const gainTransactions = filteredTxs.filter((tx) => tx.type === 'RECORD_GAIN' || tx.type === 'REDEEM_COUPON');
+    const gainTransactions = filteredTxs.filter((tx) => tx.type === 'RECORD_GAIN' || tx.type === 'REDEEM_COUPON' || tx.type === 'RECORD_COUPON_GAIN');
     const totalDailyGain = gainTransactions.reduce((sum, tx) => sum + tx.amount, 0);
 
     // Group gains by market

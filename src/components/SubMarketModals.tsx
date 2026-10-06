@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { SubMarket, MarketCoupon } from '../types';
+import { SubMarket, MarketCoupon, StoreCouponItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -432,7 +432,632 @@ export const RecordGainModal: React.FC<RecordGainModalProps> = ({
 };
 
 // ----------------------------------------------------
-// 4. REDEEM COUPON MODAL
+// 4. TRANSFER STORE COUPONS TO SUB-MARKET MODAL
+// ----------------------------------------------------
+export interface TransferCouponsModalProps {
+  visible: boolean;
+  market: SubMarket | null;
+  storeCoupons: StoreCouponItem[];
+  onClose: () => void;
+  onTransfer: (
+    storeCouponId: string,
+    subMarketId: string,
+    quantity: number,
+    note?: string
+  ) => Promise<boolean>;
+}
+
+export const TransferCouponsModal: React.FC<TransferCouponsModalProps> = ({
+  visible,
+  market,
+  storeCoupons,
+  onClose,
+  onTransfer,
+}) => {
+  const { t, isRTL } = useLanguage();
+  const availableCoupons = (storeCoupons || []).filter((c) => c.inStockQuantity > 0);
+  const [selectedCouponId, setSelectedCouponId] = useState<string>('');
+  const [quantity, setQuantity] = useState('1');
+  const [note, setNote] = useState('');
+  const [transferring, setTransferring] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      if (availableCoupons.length > 0 && (!selectedCouponId || !availableCoupons.some((c) => c.id === selectedCouponId))) {
+        setSelectedCouponId(availableCoupons[0].id);
+      }
+      setQuantity('1');
+      setNote('');
+    }
+  }, [visible, storeCoupons]);
+
+  if (!market) return null;
+
+  const selectedCoupon = availableCoupons.find((c) => c.id === selectedCouponId) || availableCoupons[0];
+  const maxStock = selectedCoupon ? selectedCoupon.inStockQuantity : 0;
+  const numQty = Math.max(1, Math.min(maxStock || 1, parseInt(quantity, 10) || 1));
+  const unitVal = selectedCoupon ? selectedCoupon.unitValue : 0;
+  const totalValue = numQty * unitVal;
+  const currentCouponsBal = market.currentCouponsBalance ?? Math.max(
+    0,
+    (market.totalCouponsTaken || 0) - (market.totalCouponsGained || market.totalCouponsRedeemed || 0)
+  );
+  const newCouponsBal = currentCouponsBal + totalValue;
+
+  const handleConfirm = async () => {
+    if (!selectedCoupon) {
+      Alert.alert('Error', isRTL ? 'لا توجد كوبونات متاحة بالمخزن' : 'No coupons available in store stock.');
+      return;
+    }
+    if (numQty <= 0 || numQty > maxStock) {
+      Alert.alert(
+        'Validation Error',
+        isRTL
+          ? `يرجى إدخال عدد صالح بين ١ و ${maxStock}`
+          : `Please enter a valid quantity between 1 and ${maxStock}`
+      );
+      return;
+    }
+
+    setTransferring(true);
+    try {
+      const ok = await onTransfer(selectedCoupon.id, market.id, numQty, note.trim());
+      if (ok) {
+        onClose();
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Transfer failed');
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.overlay}
+      >
+        <View style={styles.modalContent}>
+          {/* Header */}
+          <View style={[styles.header, isRTL && styles.rowRtl]}>
+            <View style={[styles.headerLeft, isRTL && styles.rowRtl]}>
+              <View style={[styles.iconContainer, { backgroundColor: '#EDE9FE' }]}>
+                <MaterialCommunityIcons name="ticket-confirmation" size={22} color="#7C3AED" />
+              </View>
+              <View style={{ alignItems: isRTL ? 'flex-end' : 'flex-start' }}>
+                <Text style={styles.headerTitle}>{t('transferCouponsTitle')}</Text>
+                <Text style={styles.headerSubtitle}>{market.name}</Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+              <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
+            {availableCoupons.length === 0 ? (
+              <View style={[styles.emptyContainer, { paddingVertical: 24 }]}>
+                <MaterialCommunityIcons name="ticket-outline" size={42} color={colors.textMuted} />
+                <Text style={[styles.emptyText, { marginTop: 10 }]}>
+                  {t('noStoreCouponsAvailable')}
+                </Text>
+                <Text style={[styles.dialogSub, { marginTop: 4, textAlign: 'center' }]}>
+                  {isRTL
+                    ? 'يرجى إضافة وشراء كوبونات في المخزن الرئيسي أولاً لتتمكن من صرفها للمنافذ'
+                    : 'Please stock coupons in the Main Store first to transfer them to sub-markets'}
+                </Text>
+              </View>
+            ) : (
+              <>
+                {/* 1. Select Store Coupon */}
+                <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                  {t('selectStoreCoupon')} *
+                </Text>
+                <View style={{ marginBottom: 12 }}>
+                  {availableCoupons.map((c) => {
+                    const isSelected = selectedCoupon?.id === c.id;
+                    return (
+                      <TouchableOpacity
+                        key={c.id}
+                        onPress={() => setSelectedCouponId(c.id)}
+                        style={[
+                          styles.couponSelectionCard,
+                          isSelected && styles.couponSelectionCardActive,
+                          isRTL && styles.rowRtl,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={isSelected ? 'radiobox-marked' : 'radiobox-blank'}
+                          size={20}
+                          color={isSelected ? '#7C3AED' : colors.textMuted}
+                        />
+                        <View style={{ flex: 1, marginHorizontal: 8 }}>
+                          <Text style={[styles.couponSelectionTitle, isSelected && { color: '#6D28D9', fontWeight: '800' }, isRTL && { textAlign: 'right' }]}>
+                            {c.name}
+                          </Text>
+                          <Text style={[styles.couponSelectionMeta, isRTL && { textAlign: 'right' }]}>
+                            {isRTL ? 'قيمة الكوبون:' : 'Unit Value:'} {c.unitValue.toLocaleString()} {t('currency')}
+                          </Text>
+                        </View>
+                        <View style={[styles.stockPill, { backgroundColor: isSelected ? '#EDE9FE' : colors.cardHover }]}>
+                          <Text style={[styles.stockPillText, isSelected && { color: '#6D28D9', fontWeight: '800' }]}>
+                            {isRTL ? `المتاح: ${c.inStockQuantity}` : `In Stock: ${c.inStockQuantity}`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* 2. Number of coupons input with stepper */}
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                    {t('numberOfCoupons')} * ({isRTL ? `الأقصى بالمخزن: ${maxStock}` : `Max: ${maxStock}`})
+                  </Text>
+                  <View style={[styles.stepperRow, isRTL && styles.rowRtl]}>
+                    <TouchableOpacity
+                      style={styles.stepperBtn}
+                      onPress={() => setQuantity(String(Math.max(1, numQty - 1)))}
+                    >
+                      <MaterialCommunityIcons name="minus" size={20} color={colors.textPrimary} />
+                    </TouchableOpacity>
+
+                    <TextInput
+                      style={styles.stepperInput}
+                      keyboardType="number-pad"
+                      value={quantity}
+                      onChangeText={(val) => {
+                        const parsed = parseInt(val.replace(/[^0-9]/g, ''), 10) || 0;
+                        setQuantity(String(Math.min(maxStock, parsed)));
+                      }}
+                    />
+
+                    <TouchableOpacity
+                      style={styles.stepperBtn}
+                      onPress={() => setQuantity(String(Math.min(maxStock, numQty + 1)))}
+                    >
+                      <MaterialCommunityIcons name="plus" size={20} color={colors.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Quick Chips for Quantity */}
+                  <View style={[styles.quickChipsRow, isRTL && styles.rowRtl]}>
+                    <TouchableOpacity style={styles.chipBtn} onPress={() => setQuantity('1')}>
+                      <Text style={styles.chipBtnText}>{isRTL ? '١ كوبون' : '1'}</Text>
+                    </TouchableOpacity>
+                    {maxStock >= 5 && (
+                      <TouchableOpacity style={styles.chipBtn} onPress={() => setQuantity('5')}>
+                        <Text style={styles.chipBtnText}>{isRTL ? '٥ كوبونات' : '5'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {maxStock >= 10 && (
+                      <TouchableOpacity style={styles.chipBtn} onPress={() => setQuantity('10')}>
+                        <Text style={styles.chipBtnText}>{isRTL ? '١٠ كوبونات' : '10'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {maxStock >= 20 && (
+                      <TouchableOpacity style={styles.chipBtn} onPress={() => setQuantity('20')}>
+                        <Text style={styles.chipBtnText}>{isRTL ? '٢٠ كوبون' : '20'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity style={[styles.chipBtn, styles.chipBtnAll]} onPress={() => setQuantity(String(maxStock))}>
+                      <Text style={[styles.chipBtnText, { color: '#7C3AED', fontWeight: '800' }]}>
+                        {isRTL ? `الكل (${maxStock})` : `All (${maxStock})`}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* 3. Note input */}
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>{t('couponNote')}</Text>
+                  <TextInput
+                    style={[styles.input, isRTL && { textAlign: 'right' }]}
+                    placeholder={isRTL ? 'ملاحظات اختيارية عن الصرف' : 'Optional notes'}
+                    placeholderTextColor={colors.textMuted}
+                    value={note}
+                    onChangeText={setNote}
+                  />
+                </View>
+
+                {/* 4. Live Preview Box */}
+                <View style={[styles.calcPreviewBox, { borderColor: '#DDD6FE', backgroundColor: '#FAF5FF' }]}>
+                  <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
+                    <Text style={styles.calcLabel}>{isRTL ? 'الكوبون المحدد:' : 'Selected Coupon:'}</Text>
+                    <Text style={[styles.calcValue, { color: '#6D28D9', fontWeight: '800' }]}>
+                      {selectedCoupon?.name}
+                    </Text>
+                  </View>
+
+                  <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
+                    <Text style={styles.calcLabel}>{isRTL ? 'الحسبة:' : 'Calculation:'}</Text>
+                    <Text style={[styles.calcValue, { color: '#7C3AED' }]}>
+                      {numQty} × {unitVal.toLocaleString()} = {totalValue.toLocaleString()} {t('currency')}
+                    </Text>
+                  </View>
+
+                  <View style={styles.calcDivider} />
+
+                  <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
+                    <Text style={styles.calcLabel}>{isRTL ? 'المتبقي بالمخزن بعد الصرف:' : 'Store Stock Remaining:'}</Text>
+                    <Text style={[styles.calcValue, { fontWeight: '700' }]}>
+                      {maxStock - numQty} {isRTL ? 'كوبون' : 'coupons'}
+                    </Text>
+                  </View>
+
+                  <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
+                    <Text style={styles.calcLabel}>{isRTL ? 'رصيد كوبونات المنفذ بعد التحويل:' : 'Market Coupon Balance After:'}</Text>
+                    <Text style={[styles.calcValue, { fontWeight: '900', color: '#6D28D9', fontSize: 16 }]}>
+                      {newCouponsBal.toLocaleString()} {t('currency')}
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+          </ScrollView>
+
+          {/* Footer */}
+          <View style={[styles.footer, isRTL && styles.rowRtl]}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={transferring}>
+              <Text style={styles.cancelText}>{t('cancel')}</Text>
+            </TouchableOpacity>
+            {availableCoupons.length > 0 && (
+              <TouchableOpacity
+                style={[styles.saveBtn, { backgroundColor: '#7C3AED' }, transferring && { opacity: 0.6 }]}
+                onPress={handleConfirm}
+                disabled={transferring}
+              >
+                <MaterialCommunityIcons name="check-circle" size={20} color={colors.white} style={{ marginHorizontal: 4 }} />
+                <Text style={styles.saveText}>
+                  {transferring ? (isRTL ? 'جاري الصرف...' : 'Transferring...') : t('transferCouponsBtn')}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
+
+// ----------------------------------------------------
+// 5. RECORD COUPON GAIN MODAL (Sub-Market returning coupon value)
+// ----------------------------------------------------
+export interface RecordCouponGainModalProps {
+  visible: boolean;
+  market: SubMarket | null;
+  onClose: () => void;
+  onRecordCouponGain: (
+    subMarketId: string,
+    amount: number,
+    couponId?: string,
+    quantity?: number,
+    note?: string
+  ) => Promise<boolean>;
+}
+
+export const RecordCouponGainModal: React.FC<RecordCouponGainModalProps> = ({
+  visible,
+  market,
+  onClose,
+  onRecordCouponGain,
+}) => {
+  const { t, isRTL } = useLanguage();
+  const [selectedCouponId, setSelectedCouponId] = useState<string>('');
+  const [returnQty, setReturnQty] = useState('1');
+  const [manualAmount, setManualAmount] = useState('');
+  const [useManualAmount, setUseManualAmount] = useState(false);
+  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  if (!market) return null;
+
+  const couponsWithMarket = (market.coupons || []).filter((c) => {
+    const total = c.totalQuantity || 1;
+    const redeemed = c.redeemedQuantity || (c.isRedeemed ? total : 0);
+    return total - redeemed > 0;
+  });
+
+  const selectedCoupon = couponsWithMarket.find((c) => c.id === selectedCouponId) || couponsWithMarket[0];
+  const maxCouponQty = selectedCoupon
+    ? Math.max(0, (selectedCoupon.totalQuantity || 1) - (selectedCoupon.redeemedQuantity || 0))
+    : 0;
+
+  const numReturnQty = Math.max(1, Math.min(maxCouponQty || 9999, parseInt(returnQty, 10) || 1));
+  const couponUnitVal = selectedCoupon ? (selectedCoupon.unitValue || selectedCoupon.value) : 0;
+  const computedAmount = selectedCoupon && !useManualAmount ? numReturnQty * couponUnitVal : parseFloat(manualAmount) || 0;
+
+  const currentCouponsBal = market.currentCouponsBalance ?? Math.max(
+    0,
+    (market.totalCouponsTaken || 0) - (market.totalCouponsGained || market.totalCouponsRedeemed || 0)
+  );
+  const newCouponsBal = Math.max(0, currentCouponsBal - computedAmount);
+  const prevCouponsGained = market.totalCouponsGained || market.totalCouponsRedeemed || 0;
+  const newCouponsGained = prevCouponsGained + computedAmount;
+
+  const handleConfirm = async () => {
+    if (computedAmount <= 0) {
+      Alert.alert('Validation Error', isRTL ? 'يرجى إدخال قيمة عائد صحيحة' : 'Please enter a valid coupon return amount.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const ok = await onRecordCouponGain(
+        market.id,
+        computedAmount,
+        useManualAmount ? undefined : selectedCoupon?.id,
+        useManualAmount ? undefined : numReturnQty,
+        note.trim()
+      );
+      if (ok) {
+        setReturnQty('1');
+        setManualAmount('');
+        setNote('');
+        onClose();
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to record coupon gain.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.overlay}
+      >
+        <View style={styles.modalContent}>
+          {/* Header */}
+          <View style={[styles.header, isRTL && styles.rowRtl]}>
+            <View style={[styles.headerLeft, isRTL && styles.rowRtl]}>
+              <View style={[styles.iconContainer, { backgroundColor: '#EEF2FF' }]}>
+                <MaterialCommunityIcons name="ticket-percent" size={22} color="#4F46E5" />
+              </View>
+              <View style={{ alignItems: isRTL ? 'flex-end' : 'flex-start' }}>
+                <Text style={styles.headerTitle}>{t('recordCouponGainTitle')}</Text>
+                <Text style={styles.headerSubtitle}>{market.name}</Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+              <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
+            {/* Status Hero Card */}
+            <View style={[styles.couponHeroCard, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0', borderWidth: 1 }]}>
+              <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
+                <Text style={styles.couponHeroLabel}>{t('currentCouponsBalance')}</Text>
+                <Text style={[styles.couponHeroDebt, { color: '#4F46E5' }]}>
+                  {currentCouponsBal.toLocaleString()} {t('currency')}
+                </Text>
+              </View>
+              <View style={[styles.couponHeroStatsRow, isRTL && styles.rowRtl, { marginTop: 6 }]}>
+                <View style={[styles.couponStatPill, { backgroundColor: '#EDE9FE', flex: 1 }]}>
+                  <Text style={[styles.couponStatPillText, { color: '#6D28D9' }]} numberOfLines={1}>
+                    {t('totalCouponsTaken')} {(market.totalCouponsTaken || 0).toLocaleString()} {t('currency')}
+                  </Text>
+                </View>
+                <View style={[styles.couponStatPill, { backgroundColor: colors.successLight, flex: 1 }]}>
+                  <Text style={[styles.couponStatPillText, { color: colors.successText }]} numberOfLines={1}>
+                    {t('totalCouponsGained')} {prevCouponsGained.toLocaleString()} {t('currency')}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Selection mode toggle: By Coupon vs Manual Amount */}
+            {couponsWithMarket.length > 0 && (
+              <View style={[styles.toggleModeRow, isRTL && styles.rowRtl]}>
+                <TouchableOpacity
+                  style={[styles.modeTabBtn, !useManualAmount && styles.modeTabBtnActive]}
+                  onPress={() => setUseManualAmount(false)}
+                >
+                  <MaterialCommunityIcons name="ticket-outline" size={16} color={!useManualAmount ? '#4F46E5' : colors.textMuted} />
+                  <Text style={[styles.modeTabText, !useManualAmount && styles.modeTabTextActive]}>
+                    {isRTL ? 'تحديد بعدد الكوبونات' : 'By Coupon Count'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modeTabBtn, useManualAmount && styles.modeTabBtnActive]}
+                  onPress={() => setUseManualAmount(true)}
+                >
+                  <MaterialCommunityIcons name="cash" size={16} color={useManualAmount ? '#4F46E5' : colors.textMuted} />
+                  <Text style={[styles.modeTabText, useManualAmount && styles.modeTabTextActive]}>
+                    {isRTL ? 'إدخال مبلغ مالي مباشر' : 'Direct Money Value'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {!useManualAmount && couponsWithMarket.length > 0 ? (
+              <>
+                {/* Pick which coupon is being returned */}
+                <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                  {isRTL ? 'اختر الكوبون المورد من المنفذ:' : 'Select Returning Coupon:'}
+                </Text>
+                <View style={{ marginBottom: 10 }}>
+                  {couponsWithMarket.map((c) => {
+                    const isSelected = selectedCoupon?.id === c.id;
+                    const total = c.totalQuantity || 1;
+                    const redeemed = c.redeemedQuantity || (c.isRedeemed ? total : 0);
+                    const rem = Math.max(0, total - redeemed);
+                    const uVal = c.unitValue || c.value;
+                    return (
+                      <TouchableOpacity
+                        key={c.id}
+                        onPress={() => {
+                          setSelectedCouponId(c.id);
+                          setReturnQty('1');
+                        }}
+                        style={[
+                          styles.couponSelectionCard,
+                          isSelected && styles.couponSelectionCardActive,
+                          isRTL && styles.rowRtl,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={isSelected ? 'radiobox-marked' : 'radiobox-blank'}
+                          size={20}
+                          color={isSelected ? '#4F46E5' : colors.textMuted}
+                        />
+                        <View style={{ flex: 1, marginHorizontal: 8 }}>
+                          <Text style={[styles.couponSelectionTitle, isSelected && { color: '#4338CA', fontWeight: '800' }, isRTL && { textAlign: 'right' }]}>
+                            {c.name || c.code}
+                          </Text>
+                          <Text style={[styles.couponSelectionMeta, isRTL && { textAlign: 'right' }]}>
+                            {isRTL ? 'قيمة الكوبون:' : 'Unit Value:'} {uVal.toLocaleString()} {t('currency')}
+                          </Text>
+                        </View>
+                        <View style={[styles.stockPill, { backgroundColor: isSelected ? '#EEF2FF' : colors.cardHover }]}>
+                          <Text style={[styles.stockPillText, isSelected && { color: '#4338CA', fontWeight: '800' }]}>
+                            {isRTL ? `المتبقي معه: ${rem}` : `With Market: ${rem}`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Return count stepper */}
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                    {isRTL ? `عدد الكوبونات الموردة (الأقصى: ${maxCouponQty}):` : `Returned Coupon Count (Max: ${maxCouponQty}):`}
+                  </Text>
+                  <View style={[styles.stepperRow, isRTL && styles.rowRtl]}>
+                    <TouchableOpacity
+                      style={styles.stepperBtn}
+                      onPress={() => setReturnQty(String(Math.max(1, numReturnQty - 1)))}
+                    >
+                      <MaterialCommunityIcons name="minus" size={20} color={colors.textPrimary} />
+                    </TouchableOpacity>
+
+                    <TextInput
+                      style={styles.stepperInput}
+                      keyboardType="number-pad"
+                      value={returnQty}
+                      onChangeText={(val) => {
+                        const parsed = parseInt(val.replace(/[^0-9]/g, ''), 10) || 0;
+                        setReturnQty(String(Math.min(maxCouponQty, parsed)));
+                      }}
+                    />
+
+                    <TouchableOpacity
+                      style={styles.stepperBtn}
+                      onPress={() => setReturnQty(String(Math.min(maxCouponQty, numReturnQty + 1)))}
+                    >
+                      <MaterialCommunityIcons name="plus" size={20} color={colors.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Quick Chips */}
+                  <View style={[styles.quickChipsRow, isRTL && styles.rowRtl]}>
+                    <TouchableOpacity style={styles.chipBtn} onPress={() => setReturnQty('1')}>
+                      <Text style={styles.chipBtnText}>{isRTL ? '١ كوبون' : '1'}</Text>
+                    </TouchableOpacity>
+                    {maxCouponQty >= 5 && (
+                      <TouchableOpacity style={styles.chipBtn} onPress={() => setReturnQty('5')}>
+                        <Text style={styles.chipBtnText}>{isRTL ? '٥ كوبونات' : '5'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {maxCouponQty >= 10 && (
+                      <TouchableOpacity style={styles.chipBtn} onPress={() => setReturnQty('10')}>
+                        <Text style={styles.chipBtnText}>{isRTL ? '١٠ كوبونات' : '10'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity style={[styles.chipBtn, styles.chipBtnAll]} onPress={() => setReturnQty(String(maxCouponQty))}>
+                      <Text style={[styles.chipBtnText, { color: '#4F46E5', fontWeight: '800' }]}>
+                        {isRTL ? `توريد الكل (${maxCouponQty})` : `All (${maxCouponQty})`}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </>
+            ) : (
+              /* Direct Amount Input */
+              <View style={styles.inputGroup}>
+                <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>
+                  {isRTL ? 'قيمة الكوبونات الموردة (ج.م) *' : 'Returned Coupon Value (EGP) *'}
+                </Text>
+                <TextInput
+                  style={[styles.input, styles.largeInput, { color: '#4F46E5' }, isRTL && { textAlign: 'right' }]}
+                  placeholder="0.00"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="numeric"
+                  value={manualAmount}
+                  onChangeText={setManualAmount}
+                />
+              </View>
+            )}
+
+            {/* Note input */}
+            <View style={styles.inputGroup}>
+              <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>{t('couponNote')}</Text>
+              <TextInput
+                style={[styles.input, isRTL && { textAlign: 'right' }]}
+                placeholder={isRTL ? 'ملاحظات اختيارية عن التوريد' : 'Optional notes'}
+                placeholderTextColor={colors.textMuted}
+                value={note}
+                onChangeText={setNote}
+              />
+            </View>
+
+            {/* Calculations preview: Subtracted from coupons & Total Coupons Gained */}
+            <View style={[styles.calcPreviewBox, { borderColor: '#C7D2FE', backgroundColor: '#EEF2FF' }]}>
+              <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
+                <Text style={styles.calcLabel}>{isRTL ? 'قيمة التوريد المستلمة:' : 'Returned Coupon Value:'}</Text>
+                <Text style={[styles.calcValue, { color: '#4338CA', fontWeight: '800', fontSize: 16 }]}>
+                  {computedAmount.toLocaleString()} {t('currency')}
+                </Text>
+              </View>
+
+              <View style={styles.calcDivider} />
+
+              <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
+                <Text style={styles.calcLabel}>{isRTL ? 'متبقي الكوبونات مع المنفذ (يتم خصمها):' : 'Remaining Coupons (Subtracted):'}</Text>
+                <Text style={[styles.calcValue, { fontWeight: '900', color: newCouponsBal > 0 ? colors.textPrimary : colors.successText }]}>
+                  {newCouponsBal.toLocaleString()} {t('currency')}
+                </Text>
+              </View>
+
+              <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
+                <Text style={styles.calcLabel}>{isRTL ? 'إجمالي الكوبونات الموردة الجديد:' : 'New Total Coupons Gained:'}</Text>
+                <Text style={[styles.calcValue, { fontWeight: '900', color: colors.successText }]}>
+                  {newCouponsGained.toLocaleString()} {t('currency')}
+                </Text>
+              </View>
+            </View>
+          </ScrollView>
+
+          {/* Footer */}
+          <View style={[styles.footer, isRTL && styles.rowRtl]}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={loading}>
+              <Text style={styles.cancelText}>{t('cancel')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.saveBtn, { backgroundColor: '#4F46E5' }, loading && { opacity: 0.6 }]}
+              onPress={handleConfirm}
+              disabled={loading}
+            >
+              <MaterialCommunityIcons name="check-circle" size={20} color={colors.white} style={{ marginHorizontal: 4 }} />
+              <Text style={styles.saveText}>
+                {loading ? (isRTL ? 'جاري التسجيل...' : 'Saving...') : t('recordCouponGainBtn')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
+
+// ----------------------------------------------------
+// 6. REDEEM COUPON MODAL (Backward Compatibility)
 // ----------------------------------------------------
 interface RedeemCouponModalProps {
   visible: boolean;
@@ -458,8 +1083,8 @@ export const RedeemCouponModal: React.FC<RedeemCouponModalProps> = ({
   const numValue = parseFloat(couponValue) || 0;
   const numQty = Math.max(1, parseInt(quantity, 10) || 1);
   const totalDeduction = numValue * numQty;
-  const currentDebt = market?.currentDebt || 0;
-  const newDebt = Math.max(0, currentDebt - totalDeduction);
+  const currentCouponsBal = market?.currentCouponsBalance ?? Math.max(0, (market?.totalCouponsTaken || 0) - (market?.totalCouponsGained || 0));
+  const newCouponsBal = Math.max(0, currentCouponsBal - totalDeduction);
 
   const handleConfirm = async () => {
     if (!market) return;
@@ -515,7 +1140,6 @@ export const RedeemCouponModal: React.FC<RedeemCouponModalProps> = ({
               </Text>
             </View>
 
-            {/* Coupon Unit Value & Quantity Row */}
             <View style={[styles.calcRow, { marginBottom: 10 }, isRTL && styles.rowRtl]}>
               <View style={{ flex: 1.2, marginHorizontal: 3 }}>
                 <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>{t('couponValue')}</Text>
@@ -554,7 +1178,6 @@ export const RedeemCouponModal: React.FC<RedeemCouponModalProps> = ({
               </View>
             </View>
 
-            {/* Coupon Code / Reference (Optional) */}
             <View style={styles.inputGroup}>
               <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>{t('couponCode')}</Text>
               <TextInput
@@ -567,7 +1190,6 @@ export const RedeemCouponModal: React.FC<RedeemCouponModalProps> = ({
               />
             </View>
 
-            {/* Optional Note */}
             <View style={styles.inputGroup}>
               <Text style={[styles.label, isRTL && { textAlign: 'right' }]}>{t('couponNote')}</Text>
               <TextInput
@@ -579,19 +1201,16 @@ export const RedeemCouponModal: React.FC<RedeemCouponModalProps> = ({
               />
             </View>
 
-            {/* Calculations preview */}
             <View style={[styles.calcPreviewBox, { borderColor: '#DDD6FE' }]}>
               <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
-                <Text style={styles.calcLabel}>{t('currentMoneyOnHim')}</Text>
+                <Text style={styles.calcLabel}>{t('currentCouponsBalance')}</Text>
                 <Text style={[styles.calcValue, { color: colors.dangerText }]}>
-                  {currentDebt.toLocaleString()} {t('currency')}
+                  {currentCouponsBal.toLocaleString()} {t('currency')}
                 </Text>
               </View>
 
               <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
-                <Text style={styles.calcLabel}>
-                  {t('totalCouponDeduction')}
-                </Text>
+                <Text style={styles.calcLabel}>{t('totalCouponDeduction')}</Text>
                 <Text style={[styles.calcValue, { color: '#7C3AED', fontWeight: '800' }]}>
                   - {totalDeduction.toLocaleString()} {t('currency')}
                   {numQty > 1 ? ` (${numQty} × ${numValue.toLocaleString()})` : ''}
@@ -601,9 +1220,9 @@ export const RedeemCouponModal: React.FC<RedeemCouponModalProps> = ({
               <View style={styles.calcDivider} />
 
               <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
-                <Text style={styles.calcLabel}>{t('remainingBalanceOnHim')}</Text>
+                <Text style={styles.calcLabel}>{isRTL ? 'متبقي الكوبونات بعد الصرف:' : 'Coupons Balance After:'}</Text>
                 <Text style={[styles.calcValue, { fontSize: 16, fontWeight: '900', color: colors.textPrimary }]}>
-                  {newDebt.toLocaleString()} {t('currency')}
+                  {newCouponsBal.toLocaleString()} {t('currency')}
                 </Text>
               </View>
 
@@ -636,42 +1255,38 @@ export const RedeemCouponModal: React.FC<RedeemCouponModalProps> = ({
 };
 
 // ----------------------------------------------------
-// 5. MARKET COUPONS MANAGER MODAL (Add & Partial Redeem)
+// 7. SUB-MARKET COUPONS DETAIL MODAL (Transferred Store Coupons Breakdown)
 // ----------------------------------------------------
 interface MarketCouponsModalProps {
   visible: boolean;
   market: SubMarket | null;
   onClose: () => void;
-  onAddCoupon: (marketId: string, name: string, quantity: number, unitValue: number, note?: string) => Promise<void>;
-  onRedeemCoupons: (marketId: string, couponId: string, quantityToRedeem?: number) => Promise<boolean>;
-  onUndoRedeemCoupons: (marketId: string, couponId: string, quantityToUndo?: number) => Promise<boolean>;
-  onToggleRedemption: (marketId: string, couponId: string) => Promise<boolean>;
-  onDeleteCoupon: (marketId: string, couponId: string) => Promise<void>;
+  onRecordCouponGain?: (marketId: string, amount: number, couponId?: string, quantity?: number, note?: string) => Promise<boolean>;
+  onOpenTransferCoupons?: () => void;
+  onAddCoupon?: any;
+  onRedeemCoupons?: any;
+  onUndoRedeemCoupons?: any;
+  onToggleRedemption?: any;
+  onDeleteCoupon?: any;
 }
 
 export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
   visible,
   market,
   onClose,
-  onAddCoupon,
+  onRecordCouponGain,
+  onOpenTransferCoupons,
   onRedeemCoupons,
   onUndoRedeemCoupons,
-  onToggleRedemption,
   onDeleteCoupon,
 }) => {
   const { t, isRTL } = useLanguage();
-  // Form fields for adding new coupons
-  const [couponName, setCouponName] = useState('');
-  const [couponQuantity, setCouponQuantity] = useState('1');
-  const [couponUnitValue, setCouponUnitValue] = useState('');
-  const [adding, setAdding] = useState(false);
-
   const [filterTab, setFilterTab] = useState<'ALL' | 'ACTIVE' | 'REDEEMED'>('ALL');
 
-  // State for partial redemption dialog
-  const [redeemingItem, setRedeemingItem] = useState<MarketCoupon | null>(null);
-  const [redeemQtyInput, setRedeemQtyInput] = useState('1');
-  const [redeemingAction, setRedeemingAction] = useState(false);
+  // State for return quantity dialog
+  const [returningItem, setReturningItem] = useState<MarketCoupon | null>(null);
+  const [returnQtyInput, setReturnQtyInput] = useState('1');
+  const [returningAction, setReturningAction] = useState(false);
 
   // State for undo dialog
   const [undoingItem, setUndoingItem] = useState<MarketCoupon | null>(null);
@@ -682,7 +1297,6 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
 
   const coupons = market.coupons || [];
 
-  // Helper stats
   const activeCoupons = coupons.filter((c) => {
     const totalQty = c.totalQuantity || 1;
     const redeemedQty = c.redeemedQuantity || (c.isRedeemed ? totalQty : 0);
@@ -695,14 +1309,14 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
     return redeemedQty >= totalQty;
   });
 
-  const totalActiveValue = coupons.reduce((sum, c) => {
+  const totalActiveValue = market.currentCouponsBalance ?? coupons.reduce((sum, c) => {
     const totalQty = c.totalQuantity || 1;
     const redeemedQty = c.redeemedQuantity || (c.isRedeemed ? totalQty : 0);
     const rem = Math.max(0, totalQty - redeemedQty);
     return sum + rem * (c.unitValue || c.value);
   }, 0);
 
-  const totalRedeemedValue = coupons.reduce((sum, c) => {
+  const totalRedeemedValue = (market.totalCouponsGained || market.totalCouponsRedeemed) ?? coupons.reduce((sum, c) => {
     const totalQty = c.totalQuantity || 1;
     const redeemedQty = c.redeemedQuantity || (c.isRedeemed ? totalQty : 0);
     return sum + redeemedQty * (c.unitValue || c.value);
@@ -717,66 +1331,45 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
     return true;
   });
 
-  const numNewQty = parseInt(couponQuantity, 10) || 0;
-  const numNewVal = parseFloat(couponUnitValue) || 0;
-
-  const handleCreateCoupon = async () => {
-    if (!couponName.trim()) {
-      Alert.alert('Validation Error', isRTL ? 'يرجى إدخال اسم الكوبون' : 'Please enter coupon name.');
-      return;
-    }
-    if (numNewQty <= 0) {
-      Alert.alert('Validation Error', isRTL ? 'يرجى إدخال عدد الكوبونات (١ على الأقل)' : 'Please enter valid number of coupons (at least 1).');
-      return;
-    }
-    if (numNewVal <= 0) {
-      Alert.alert('Validation Error', isRTL ? 'يرجى إدخال قيمة صحيحة للكوبون' : 'Please enter a valid coupon value.');
-      return;
-    }
-
-    setAdding(true);
-    await onAddCoupon(market.id, couponName.trim(), numNewQty, numNewVal);
-    setCouponName('');
-    setCouponQuantity('1');
-    setCouponUnitValue('');
-    setAdding(false);
-  };
-
-  const handleQuickRedeemOne = async (c: MarketCoupon) => {
+  const handleQuickReturnOne = async (c: MarketCoupon) => {
     const unitVal = c.unitValue || c.value;
     const msg = isRTL
-      ? `هل تريد صرف كوبون واحد من "${c.name || c.code}" بقيمة ${unitVal.toLocaleString()} ج.م؟`
-      : `Redeem 1 coupon of "${c.name || c.code}" (${unitVal.toLocaleString()} EGP)?`;
+      ? `هل تريد تسجيل توريد كوبون واحد من "${c.name || c.code}" بقيمة ${unitVal.toLocaleString()} ج.م؟`
+      : `Record return of 1 coupon of "${c.name || c.code}" (${unitVal.toLocaleString()} EGP)?`;
+
+    const proceed = async () => {
+      if (onRecordCouponGain) {
+        await onRecordCouponGain(market.id, unitVal, c.id, 1, `Return 1x "${c.name || c.code}"`);
+      } else if (onRedeemCoupons) {
+        await onRedeemCoupons(market.id, c.id, 1);
+      }
+    };
 
     if (Platform.OS === 'web') {
       const ok = typeof window !== 'undefined' ? window.confirm(msg) : true;
-      if (ok) {
-        await onRedeemCoupons(market.id, c.id, 1);
-      }
+      if (ok) await proceed();
       return;
     }
 
     Alert.alert(
-      isRTL ? 'صرف كوبون' : 'Redeem Coupon',
+      isRTL ? 'توريد كوبون' : 'Return Coupon',
       msg,
       [
         { text: t('cancel'), style: 'cancel' },
         {
-          text: isRTL ? 'صرف (١)' : 'Redeem (1)',
+          text: isRTL ? 'توريد (١)' : 'Return (1)',
           style: 'default',
-          onPress: async () => {
-            await onRedeemCoupons(market.id, c.id, 1);
-          },
+          onPress: proceed,
         },
       ]
     );
   };
 
-  const handleConfirmCustomRedeem = async () => {
-    if (!redeemingItem) return;
-    const qty = parseInt(redeemQtyInput, 10) || 0;
-    const totalQty = redeemingItem.totalQuantity || 1;
-    const redeemedQty = redeemingItem.redeemedQuantity || (redeemingItem.isRedeemed ? totalQty : 0);
+  const handleConfirmCustomReturn = async () => {
+    if (!returningItem) return;
+    const qty = parseInt(returnQtyInput, 10) || 0;
+    const totalQty = returningItem.totalQuantity || 1;
+    const redeemedQty = returningItem.redeemedQuantity || (returningItem.isRedeemed ? totalQty : 0);
     const available = Math.max(0, totalQty - redeemedQty);
 
     if (qty <= 0 || qty > available) {
@@ -789,10 +1382,16 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
       return;
     }
 
-    setRedeemingAction(true);
-    await onRedeemCoupons(market.id, redeemingItem.id, qty);
-    setRedeemingAction(false);
-    setRedeemingItem(null);
+    setReturningAction(true);
+    const uVal = returningItem.unitValue || returningItem.value;
+    const amount = qty * uVal;
+    if (onRecordCouponGain) {
+      await onRecordCouponGain(market.id, amount, returningItem.id, qty, `Return ${qty}x "${returningItem.name || returningItem.code}"`);
+    } else if (onRedeemCoupons) {
+      await onRedeemCoupons(market.id, returningItem.id, qty);
+    }
+    setReturningAction(false);
+    setReturningItem(null);
   };
 
   const handleConfirmCustomUndo = async () => {
@@ -812,12 +1411,15 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
     }
 
     setUndoingAction(true);
-    await onUndoRedeemCoupons(market.id, undoingItem.id, qty);
+    if (onUndoRedeemCoupons) {
+      await onUndoRedeemCoupons(market.id, undoingItem.id, qty);
+    }
     setUndoingAction(false);
     setUndoingItem(null);
   };
 
   const handleDelete = (coupon: MarketCoupon) => {
+    if (!onDeleteCoupon) return;
     const msg = isRTL
       ? `هل أنت متأكد من حذف كوبون "${coupon.name || coupon.code}"؟`
       : `Are you sure you want to delete "${coupon.name || coupon.code}"?`;
@@ -870,106 +1472,45 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
           </View>
 
           <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
-            {/* Market Debt & Coupons Stats Bar */}
+            {/* Market Coupons Stats Card */}
             <View style={styles.couponHeroCard}>
               <View style={[styles.calcRow, isRTL && styles.rowRtl]}>
-                <Text style={styles.couponHeroLabel}>{t('currentMoneyOnHim')}</Text>
-                <Text style={[styles.couponHeroDebt, { color: market.currentDebt > 0 ? colors.dangerText : colors.successText }]}>
-                  {market.currentDebt.toLocaleString()} {t('currency')}
+                <Text style={styles.couponHeroLabel}>{t('currentCouponsBalance')}</Text>
+                <Text style={[styles.couponHeroDebt, { color: '#7C3AED' }]}>
+                  {totalActiveValue.toLocaleString()} {t('currency')}
                 </Text>
               </View>
 
               <View style={[styles.couponHeroStatsRow, isRTL && styles.rowRtl]}>
                 <View style={[styles.couponStatPill, { backgroundColor: '#EDE9FE', flex: 1 }]}>
-                  <Text style={styles.couponStatPillText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
-                    {isRTL ? 'متبقي للصرف' : 'Available'}: {totalActiveValue.toLocaleString()} {t('currency')}
+                  <Text style={styles.couponStatPillText} numberOfLines={1}>
+                    {t('totalCouponsTaken')} {(market.totalCouponsTaken || (totalActiveValue + totalRedeemedValue)).toLocaleString()} {t('currency')}
                   </Text>
                 </View>
                 <View style={[styles.couponStatPill, { backgroundColor: colors.successLight, flex: 1 }]}>
-                  <Text style={[styles.couponStatPillText, { color: colors.successText }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
-                    {isRTL ? 'تم صرفه' : 'Redeemed'}: {totalRedeemedValue.toLocaleString()} {t('currency')}
+                  <Text style={[styles.couponStatPillText, { color: colors.successText }]} numberOfLines={1}>
+                    {t('totalCouponsGained')} {totalRedeemedValue.toLocaleString()} {t('currency')}
                   </Text>
                 </View>
               </View>
             </View>
 
-            {/* Section: Add New Coupons */}
-            <View style={styles.addCouponCard}>
-              <View style={[styles.titleRow, isRTL && styles.rowRtl, { marginBottom: 10 }]}>
-                <MaterialCommunityIcons name="ticket-percent" size={20} color="#7C3AED" />
-                <Text style={[styles.label, { fontWeight: '800', color: '#6D28D9', marginLeft: 6, marginBottom: 0 }, isRTL && { textAlign: 'right', marginRight: 6, marginLeft: 0 }]}>
-                  {isRTL ? 'إضافة كوبونات جديدة للمنفذ' : 'Add New Coupons'}
-                </Text>
-              </View>
-
-              {/* 1. Coupon Name */}
-              <View style={{ marginBottom: 8 }}>
-                <Text style={[styles.subLabel, isRTL && { textAlign: 'right' }]}>
-                  {isRTL ? 'اسم الكوبون *' : 'Coupon Name *'}
-                </Text>
-                <TextInput
-                  style={[styles.input, { height: 40 }, isRTL && { textAlign: 'right' }]}
-                  placeholder={isRTL ? 'مثال: وجبة عائلية، كوبون ٥٠، كود خصم' : 'e.g. VIP Meal, 50 EGP Voucher'}
-                  placeholderTextColor={colors.textMuted}
-                  value={couponName}
-                  onChangeText={setCouponName}
-                />
-              </View>
-
-              {/* 2. Quantity & Money Value */}
-              <View style={[styles.calcRow, isRTL && styles.rowRtl, { marginBottom: 8 }]}>
-                <View style={{ flex: 1, marginHorizontal: 3 }}>
-                  <Text style={[styles.subLabel, isRTL && { textAlign: 'right' }]}>
-                    {isRTL ? 'عدد الكوبونات *' : 'Number of Coupons *'}
-                  </Text>
-                  <TextInput
-                    style={[styles.input, { height: 40, fontWeight: '700' }, isRTL && { textAlign: 'right' }]}
-                    placeholder={isRTL ? 'مثال: 10' : 'e.g. 10'}
-                    placeholderTextColor={colors.textMuted}
-                    keyboardType="number-pad"
-                    value={couponQuantity}
-                    onChangeText={(val) => setCouponQuantity(val.replace(/[^0-9]/g, ''))}
-                  />
-                </View>
-
-                <View style={{ flex: 1, marginHorizontal: 3 }}>
-                  <Text style={[styles.subLabel, isRTL && { textAlign: 'right' }]}>
-                    {isRTL ? 'قيمة الكوبون الواحد (ج.م) *' : 'Money Value (EGP) *'}
-                  </Text>
-                  <TextInput
-                    style={[styles.input, { height: 40, fontWeight: '700', color: '#7C3AED' }, isRTL && { textAlign: 'right' }]}
-                    placeholder={isRTL ? 'مثال: 50' : 'e.g. 50'}
-                    placeholderTextColor={colors.textMuted}
-                    keyboardType="numeric"
-                    value={couponUnitValue}
-                    onChangeText={setCouponUnitValue}
-                  />
-                </View>
-              </View>
-
-              {/* Computed Live Summary */}
-              {numNewQty > 0 && numNewVal > 0 && (
-                <View style={[styles.couponSummaryPill, isRTL && styles.rowRtl]}>
-                  <MaterialCommunityIcons name="calculator" size={15} color="#7C3AED" />
-                  <Text style={[styles.couponSummaryPillText, isRTL && { textAlign: 'right' }]}>
-                    {isRTL
-                      ? `الإجمالي: ${numNewQty} كوبون × ${numNewVal.toLocaleString()} ج.م = ${(numNewQty * numNewVal).toLocaleString()} ج.م`
-                      : `Total: ${numNewQty} coupons × ${numNewVal.toLocaleString()} EGP = ${(numNewQty * numNewVal).toLocaleString()} EGP`}
-                  </Text>
-                </View>
-              )}
-
+            {/* Quick action: Transfer more coupons from store stock */}
+            {onOpenTransferCoupons && (
               <TouchableOpacity
-                style={[styles.addCouponSubmitBtn, adding && { opacity: 0.6 }]}
-                onPress={handleCreateCoupon}
-                disabled={adding}
+                style={[styles.transferCouponsQuickBanner, isRTL && styles.rowRtl]}
+                onPress={() => {
+                  onClose();
+                  onOpenTransferCoupons();
+                }}
               >
-                <MaterialCommunityIcons name="plus" size={18} color={colors.white} />
-                <Text style={styles.addCouponSubmitText}>
-                  {isRTL ? 'حفظ وإضافة الكوبونات' : 'Save & Add Coupons'}
+                <MaterialCommunityIcons name="plus-circle" size={18} color="#7C3AED" />
+                <Text style={[styles.transferCouponsQuickText, isRTL && { marginRight: 8, marginLeft: 0 }]}>
+                  {t('transferCouponsBtn')} {isRTL ? 'من المخزن الرئيسي' : 'from Store Stock'}
                 </Text>
+                <MaterialCommunityIcons name={isRTL ? "chevron-left" : "chevron-right"} size={16} color="#7C3AED" style={{ marginLeft: 'auto' }} />
               </TouchableOpacity>
-            </View>
+            )}
 
             {/* Filter Tabs */}
             <View style={[styles.couponFilterRow, isRTL && styles.rowRtl]}>
@@ -987,7 +1528,7 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                 onPress={() => setFilterTab('ACTIVE')}
               >
                 <Text style={[styles.couponFilterText, filterTab === 'ACTIVE' && styles.couponFilterTextActive]}>
-                  {isRTL ? 'متاح للصرف' : 'Active'} ({activeCoupons.length})
+                  {isRTL ? 'متبقي مع المنفذ' : 'With Market'} ({activeCoupons.length})
                 </Text>
               </TouchableOpacity>
 
@@ -996,12 +1537,12 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                 onPress={() => setFilterTab('REDEEMED')}
               >
                 <Text style={[styles.couponFilterText, filterTab === 'REDEEMED' && styles.couponFilterTextActive]}>
-                  {isRTL ? 'مكتمل الصرف' : 'Fully Redeemed'} ({redeemedCoupons.length})
+                  {isRTL ? 'تم توريده' : 'Returned'} ({redeemedCoupons.length})
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {/* List of Coupons with Partial Redeem Controls! */}
+            {/* List of Coupons Transferred to this Market */}
             {displayedCoupons.length === 0 ? (
               <View style={styles.emptyCouponsBox}>
                 <MaterialCommunityIcons name="ticket-outline" size={36} color={colors.textMuted} />
@@ -1046,13 +1587,14 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                         </View>
                       </View>
 
-                      {/* Delete */}
-                      <TouchableOpacity
-                        style={styles.deleteCouponBtn}
-                        onPress={() => handleDelete(c)}
-                      >
-                        <MaterialCommunityIcons name="trash-can-outline" size={18} color={colors.danger} />
-                      </TouchableOpacity>
+                      {onDeleteCoupon && (
+                        <TouchableOpacity
+                          style={styles.deleteCouponBtn}
+                          onPress={() => handleDelete(c)}
+                        >
+                          <MaterialCommunityIcons name="trash-can-outline" size={18} color={colors.danger} />
+                        </TouchableOpacity>
+                      )}
                     </View>
 
                     {/* Progress counts row */}
@@ -1060,8 +1602,8 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                       <View style={[styles.counterTag, isFullyRedeemed ? styles.counterTagFinished : styles.counterTagActive]}>
                         <Text style={[styles.counterTagText, isFullyRedeemed ? styles.counterTagFinishedText : styles.counterTagActiveText]}>
                           {isRTL
-                            ? `متبقي: ${remainingQty} من ${totalQty} (${remainingValue.toLocaleString()} ج.م)`
-                            : `Available: ${remainingQty} of ${totalQty} (${remainingValue.toLocaleString()} EGP)`}
+                            ? `متبقي معه: ${remainingQty} من ${totalQty} (${remainingValue.toLocaleString()} ج.م)`
+                            : `With Market: ${remainingQty} of ${totalQty} (${remainingValue.toLocaleString()} EGP)`}
                         </Text>
                       </View>
 
@@ -1069,24 +1611,24 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                         <View style={[styles.counterTag, styles.counterTagRedeemed]}>
                           <Text style={[styles.counterTagText, styles.counterTagRedeemedText]}>
                             {isRTL
-                              ? `تم صرف: ${redeemedQty} كوبون (-${(redeemedQty * unitVal).toLocaleString()} ج.م)`
-                              : `Redeemed: ${redeemedQty} (-${(redeemedQty * unitVal).toLocaleString()} EGP)`}
+                              ? `تم توريد: ${redeemedQty} كوبون (-${(redeemedQty * unitVal).toLocaleString()} ج.م)`
+                              : `Returned: ${redeemedQty} (-${(redeemedQty * unitVal).toLocaleString()} EGP)`}
                           </Text>
                         </View>
                       )}
                     </View>
 
-                    {/* Action buttons on card: Quick 1-tap redeem, Custom amount, and Undo */}
+                    {/* Return Action buttons */}
                     <View style={[styles.couponActionsRow, isRTL && styles.rowRtl]}>
                       {remainingQty > 0 && (
                         <>
                           <TouchableOpacity
                             style={[styles.quickRedeemBtn, isRTL && styles.rowRtl]}
-                            onPress={() => handleQuickRedeemOne(c)}
+                            onPress={() => handleQuickReturnOne(c)}
                           >
-                            <MaterialCommunityIcons name="check" size={15} color={colors.white} />
+                            <MaterialCommunityIcons name="cash-refund" size={15} color={colors.white} />
                             <Text style={styles.quickRedeemBtnText}>
-                              {isRTL ? `صرف ١ (-${unitVal.toLocaleString()} ج.م)` : `Redeem 1 (-${unitVal.toLocaleString()} EGP)`}
+                              {isRTL ? `توريد ١ (-${unitVal.toLocaleString()} ج.م)` : `Return 1 (-${unitVal.toLocaleString()} EGP)`}
                             </Text>
                           </TouchableOpacity>
 
@@ -1094,20 +1636,20 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                             <TouchableOpacity
                               style={[styles.customRedeemBtn, isRTL && styles.rowRtl]}
                               onPress={() => {
-                                setRedeemingItem(c);
-                                setRedeemQtyInput(String(Math.min(2, remainingQty)));
+                                setReturningItem(c);
+                                setReturnQtyInput(String(Math.min(2, remainingQty)));
                               }}
                             >
                               <MaterialCommunityIcons name="layers-outline" size={15} color="#7C3AED" />
                               <Text style={styles.customRedeemBtnText}>
-                                {isRTL ? 'صرف عدد...' : 'Custom Qty...'}
+                                {isRTL ? 'توريد عدد...' : 'Custom Return...'}
                               </Text>
                             </TouchableOpacity>
                           )}
                         </>
                       )}
 
-                      {redeemedQty > 0 && (
+                      {redeemedQty > 0 && onUndoRedeemCoupons && (
                         <TouchableOpacity
                           style={[styles.undoBtn, isRTL && styles.rowRtl]}
                           onPress={() => {
@@ -1117,17 +1659,11 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                         >
                           <MaterialCommunityIcons name="undo" size={14} color={colors.danger} />
                           <Text style={styles.undoBtnText}>
-                            {isRTL ? 'تراجع / استرجاع' : 'Undo'}
+                            {isRTL ? 'تراجع' : 'Undo'}
                           </Text>
                         </TouchableOpacity>
                       )}
                     </View>
-
-                    {c.redeemedBy && (
-                      <Text style={[styles.redeemedByNotice, isRTL && { textAlign: 'right' }]}>
-                        {t('loggedBy')} {c.redeemedBy}
-                      </Text>
-                    )}
                   </View>
                 );
               })
@@ -1144,41 +1680,41 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
           </View>
         </View>
 
-        {/* SUB-MODAL: CUSTOM REDEEM QUANTITY */}
-        {redeemingItem && (
-          <Modal visible={!!redeemingItem} animationType="fade" transparent>
+        {/* SUB-MODAL: CUSTOM RETURN QUANTITY */}
+        {returningItem && (
+          <Modal visible={!!returningItem} animationType="fade" transparent>
             <View style={styles.dialogOverlay}>
               <View style={styles.dialogCard}>
                 <View style={[styles.dialogHeader, isRTL && styles.rowRtl]}>
-                  <MaterialCommunityIcons name="ticket-confirmation" size={22} color="#7C3AED" />
+                  <MaterialCommunityIcons name="cash-refund" size={22} color="#7C3AED" />
                   <Text style={styles.dialogTitle}>
-                    {isRTL ? 'صرف كوبونات' : 'Redeem Coupons'}
+                    {isRTL ? 'توريد كوبونات' : 'Return Coupons'}
                   </Text>
                 </View>
 
                 <Text style={[styles.dialogSub, isRTL && { textAlign: 'right' }]}>
-                  {redeemingItem.name || redeemingItem.code}
+                  {returningItem.name || returningItem.code}
                 </Text>
 
                 {(() => {
-                  const total = redeemingItem.totalQuantity || 1;
-                  const done = redeemingItem.redeemedQuantity || (redeemingItem.isRedeemed ? total : 0);
+                  const total = returningItem.totalQuantity || 1;
+                  const done = returningItem.redeemedQuantity || (returningItem.isRedeemed ? total : 0);
                   const available = Math.max(0, total - done);
-                  const uVal = redeemingItem.unitValue || redeemingItem.value;
-                  const currentInputQty = Math.max(1, Math.min(available, parseInt(redeemQtyInput, 10) || 1));
+                  const uVal = returningItem.unitValue || returningItem.value;
+                  const currentInputQty = Math.max(1, Math.min(available, parseInt(returnQtyInput, 10) || 1));
                   const totalDeduction = currentInputQty * uVal;
 
                   return (
                     <View style={{ marginTop: 10 }}>
                       <Text style={[styles.subLabel, isRTL && { textAlign: 'right' }]}>
-                        {isRTL ? `المتبقي المتاح للصرف: ${available} كوبون` : `Available to redeem: ${available} coupons`}
+                        {isRTL ? `المتبقي مع المنفذ: ${available} كوبون` : `With market: ${available} coupons`}
                       </Text>
 
                       {/* Stepper for Quantity */}
                       <View style={[styles.stepperRow, isRTL && styles.rowRtl]}>
                         <TouchableOpacity
                           style={styles.stepperBtn}
-                          onPress={() => setRedeemQtyInput(String(Math.max(1, currentInputQty - 1)))}
+                          onPress={() => setReturnQtyInput(String(Math.max(1, currentInputQty - 1)))}
                         >
                           <MaterialCommunityIcons name="minus" size={20} color={colors.textPrimary} />
                         </TouchableOpacity>
@@ -1186,13 +1722,13 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                         <TextInput
                           style={styles.stepperInput}
                           keyboardType="number-pad"
-                          value={redeemQtyInput}
-                          onChangeText={(val) => setRedeemQtyInput(val.replace(/[^0-9]/g, ''))}
+                          value={returnQtyInput}
+                          onChangeText={(val) => setReturnQtyInput(val.replace(/[^0-9]/g, ''))}
                         />
 
                         <TouchableOpacity
                           style={styles.stepperBtn}
-                          onPress={() => setRedeemQtyInput(String(Math.min(available, currentInputQty + 1)))}
+                          onPress={() => setReturnQtyInput(String(Math.min(available, currentInputQty + 1)))}
                         >
                           <MaterialCommunityIcons name="plus" size={20} color={colors.textPrimary} />
                         </TouchableOpacity>
@@ -1200,22 +1736,22 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
 
                       {/* Quick Chips */}
                       <View style={[styles.quickChipsRow, isRTL && styles.rowRtl]}>
-                        <TouchableOpacity style={styles.chipBtn} onPress={() => setRedeemQtyInput('1')}>
+                        <TouchableOpacity style={styles.chipBtn} onPress={() => setReturnQtyInput('1')}>
                           <Text style={styles.chipBtnText}>{isRTL ? '١ كوبون' : '1'}</Text>
                         </TouchableOpacity>
                         {available >= 2 && (
-                          <TouchableOpacity style={styles.chipBtn} onPress={() => setRedeemQtyInput('2')}>
+                          <TouchableOpacity style={styles.chipBtn} onPress={() => setReturnQtyInput('2')}>
                             <Text style={styles.chipBtnText}>{isRTL ? '٢ كوبون' : '2'}</Text>
                           </TouchableOpacity>
                         )}
                         {available >= 5 && (
-                          <TouchableOpacity style={styles.chipBtn} onPress={() => setRedeemQtyInput('5')}>
+                          <TouchableOpacity style={styles.chipBtn} onPress={() => setReturnQtyInput('5')}>
                             <Text style={styles.chipBtnText}>{isRTL ? '٥ كوبونات' : '5'}</Text>
                           </TouchableOpacity>
                         )}
-                        <TouchableOpacity style={[styles.chipBtn, styles.chipBtnAll]} onPress={() => setRedeemQtyInput(String(available))}>
+                        <TouchableOpacity style={[styles.chipBtn, styles.chipBtnAll]} onPress={() => setReturnQtyInput(String(available))}>
                           <Text style={[styles.chipBtnText, { color: '#7C3AED', fontWeight: '800' }]}>
-                            {isRTL ? `صرف الكل (${available})` : `All (${available})`}
+                            {isRTL ? `توريد الكل (${available})` : `All (${available})`}
                           </Text>
                         </TouchableOpacity>
                       </View>
@@ -1224,8 +1760,8 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                       <View style={styles.deductionBox}>
                         <Text style={[styles.deductionBoxText, isRTL && { textAlign: 'right' }]}>
                           {isRTL
-                            ? `سيتم خصم: ${totalDeduction.toLocaleString()} ج.م من حساب المنفذ`
-                            : `Will deduct: ${totalDeduction.toLocaleString()} EGP from market debt`}
+                            ? `سيتم خصم: ${totalDeduction.toLocaleString()} ج.م من كوبونات المنفذ وإضافتها لإجمالي الكوبونات الموردة`
+                            : `Will deduct ${totalDeduction.toLocaleString()} EGP from market coupons & add to total gained`}
                         </Text>
                       </View>
 
@@ -1233,19 +1769,19 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                       <View style={[styles.dialogBtnRow, isRTL && styles.rowRtl]}>
                         <TouchableOpacity
                           style={styles.dialogCancelBtn}
-                          onPress={() => setRedeemingItem(null)}
-                          disabled={redeemingAction}
+                          onPress={() => setReturningItem(null)}
+                          disabled={returningAction}
                         >
                           <Text style={styles.dialogCancelText}>{t('cancel')}</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                          style={[styles.dialogConfirmBtn, redeemingAction && { opacity: 0.6 }]}
-                          onPress={handleConfirmCustomRedeem}
-                          disabled={redeemingAction}
+                          style={[styles.dialogConfirmBtn, returningAction && { opacity: 0.6 }]}
+                          onPress={handleConfirmCustomReturn}
+                          disabled={returningAction}
                         >
                           <Text style={styles.dialogConfirmText}>
-                            {isRTL ? `تأكيد صرف ${currentInputQty} كوبون` : `Confirm (${currentInputQty})`}
+                            {isRTL ? `تأكيد توريد ${currentInputQty} كوبون` : `Confirm Return (${currentInputQty})`}
                           </Text>
                         </TouchableOpacity>
                       </View>
@@ -1257,7 +1793,7 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
           </Modal>
         )}
 
-        {/* SUB-MODAL: UNDO REDEEM QUANTITY */}
+        {/* SUB-MODAL: UNDO RETURN QUANTITY */}
         {undoingItem && (
           <Modal visible={!!undoingItem} animationType="fade" transparent>
             <View style={styles.dialogOverlay}>
@@ -1265,7 +1801,7 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                 <View style={[styles.dialogHeader, isRTL && styles.rowRtl]}>
                   <MaterialCommunityIcons name="undo" size={22} color={colors.danger} />
                   <Text style={styles.dialogTitle}>
-                    {isRTL ? 'تراجع عن صرف كوبونات' : 'Undo Coupon Redemption'}
+                    {isRTL ? 'تراجع عن توريد كوبونات' : 'Undo Coupon Return'}
                   </Text>
                 </View>
 
@@ -1283,7 +1819,7 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                   return (
                     <View style={{ marginTop: 10 }}>
                       <Text style={[styles.subLabel, isRTL && { textAlign: 'right' }]}>
-                        {isRTL ? `الكوبونات المصروفة حالياً: ${done} كوبون` : `Redeemed coupons: ${done}`}
+                        {isRTL ? `الكوبونات الموردة حالياً: ${done} كوبون` : `Returned coupons: ${done}`}
                       </Text>
 
                       {/* Stepper for Quantity */}
@@ -1331,8 +1867,8 @@ export const MarketCouponsModal: React.FC<MarketCouponsModalProps> = ({
                       <View style={[styles.deductionBox, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
                         <Text style={[styles.deductionBoxText, { color: colors.dangerText }, isRTL && { textAlign: 'right' }]}>
                           {isRTL
-                            ? `سيتم إعادة: ${totalRestore.toLocaleString()} ج.م إلى حساب المنفذ`
-                            : `Will restore: ${totalRestore.toLocaleString()} EGP to market debt`}
+                            ? `سيتم إعادة: ${totalRestore.toLocaleString()} ج.م إلى رصيد كوبونات المنفذ`
+                            : `Will restore: ${totalRestore.toLocaleString()} EGP to market coupons`}
                         </Text>
                       </View>
 
@@ -2032,5 +2568,97 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: colors.white,
+  },
+  couponSelectionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+    marginBottom: 8,
+  },
+  couponSelectionCardActive: {
+    borderColor: '#7C3AED',
+    backgroundColor: '#FAF5FF',
+  },
+  couponSelectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  couponSelectionMeta: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  stockPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  stockPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  toggleModeRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.cardHover,
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 12,
+  },
+  modeTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  modeTabBtnActive: {
+    backgroundColor: colors.white,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  modeTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textMuted,
+    marginHorizontal: 4,
+  },
+  modeTabTextActive: {
+    color: '#4F46E5',
+    fontWeight: '800',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  transferCouponsQuickBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF5FF',
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  transferCouponsQuickText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#7C3AED',
+    marginLeft: 8,
   },
 });

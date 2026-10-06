@@ -17,11 +17,17 @@ import { Transaction } from '../types';
 export const HistoryScreen: React.FC = () => {
   const { transactions } = useData();
   const { t, isRTL } = useLanguage();
-  const [filterType, setFilterType] = useState<'ALL' | 'RECORD_GAIN' | 'TRANSFER_GOODS' | 'REDEEM_COUPON'>('ALL');
+  const [filterType, setFilterType] = useState<'ALL' | 'RECORD_GAIN' | 'TRANSFER_GOODS' | 'REDEEM_COUPON' | 'TRANSFER_COUPONS'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredTransactions = transactions.filter((tx) => {
-    const matchesFilter = filterType === 'ALL' || tx.type === filterType;
+    let matchesFilter = filterType === 'ALL';
+    if (filterType === 'REDEEM_COUPON') {
+      matchesFilter = tx.type === 'REDEEM_COUPON' || tx.type === 'RECORD_COUPON_GAIN';
+    } else if (filterType !== 'ALL') {
+      matchesFilter = tx.type === filterType;
+    }
+
     const matchesSearch =
       tx.subMarketName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       tx.userName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -32,7 +38,8 @@ export const HistoryScreen: React.FC = () => {
 
   const renderTransactionItem = ({ item }: { item: Transaction }) => {
     const isGain = item.type === 'RECORD_GAIN';
-    const isCoupon = item.type === 'REDEEM_COUPON';
+    const isCouponGain = item.type === 'REDEEM_COUPON' || item.type === 'RECORD_COUPON_GAIN';
+    const isCouponTransfer = item.type === 'TRANSFER_COUPONS';
 
     let iconName: any = 'truck-delivery';
     let iconBg = colors.infoLight;
@@ -48,12 +55,19 @@ export const HistoryScreen: React.FC = () => {
       typeLabel = t('gainPaymentRecorded');
       amountSign = '-';
       amountColor = colors.successText;
-    } else if (isCoupon) {
+    } else if (isCouponGain) {
       iconName = 'ticket-percent';
+      iconBg = '#EEF2FF';
+      iconColor = '#4F46E5';
+      typeLabel = t('couponGainRecorded');
+      amountSign = '-';
+      amountColor = '#4F46E5';
+    } else if (isCouponTransfer) {
+      iconName = 'ticket-confirmation';
       iconBg = '#EDE9FE';
       iconColor = '#7C3AED';
-      typeLabel = t('couponRedemptionRecorded');
-      amountSign = '-';
+      typeLabel = t('couponsTransferredRecorded');
+      amountSign = '+';
       amountColor = '#7C3AED';
     }
 
@@ -118,7 +132,7 @@ export const HistoryScreen: React.FC = () => {
           <Text style={styles.balanceTitle}>{t('moneyOnHim')}</Text>
           <Text style={styles.balanceChange}>
             {item.previousBalance.toLocaleString()} →{' '}
-            <Text style={{ fontWeight: '800', color: (isGain || isCoupon) ? colors.successText : colors.dangerText }}>
+            <Text style={{ fontWeight: '800', color: (isGain || isCouponGain) ? colors.successText : colors.dangerText }}>
               {item.newBalance.toLocaleString()} {t('currency')}
             </Text>
           </Text>
@@ -201,11 +215,20 @@ export const HistoryScreen: React.FC = () => {
         </TouchableOpacity>
 
         <TouchableOpacity
+          style={[styles.tabBtn, filterType === 'TRANSFER_COUPONS' && styles.activeTabBtn]}
+          onPress={() => setFilterType('TRANSFER_COUPONS')}
+        >
+          <Text style={[styles.tabText, filterType === 'TRANSFER_COUPONS' && styles.activeTabText]}>
+            {t('transferCouponsBtn')}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[styles.tabBtn, filterType === 'REDEEM_COUPON' && styles.activeTabBtn]}
           onPress={() => setFilterType('REDEEM_COUPON')}
         >
           <Text style={[styles.tabText, filterType === 'REDEEM_COUPON' && styles.activeTabText]}>
-            {t('filterCoupons')}
+            {t('recordCouponGainBtn')}
           </Text>
         </TouchableOpacity>
       </ScrollView>

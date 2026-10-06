@@ -833,13 +833,53 @@ function transferStoreCouponToMarketLogic(storeCoupon, market, quantityToTransfe
     isRedeemed: false,
   };
 
+  const prevTaken = market.totalCouponsTaken || 0;
+  const newTaken = prevTaken + transferVal;
+  const prevGained = market.totalCouponsGained || market.totalCouponsRedeemed || 0;
+  const prevBal = market.currentCouponsBalance ?? Math.max(0, prevTaken - prevGained);
+  const newBal = prevBal + transferVal;
+
   const updatedMarket = {
     ...market,
     hasCoupons: true,
+    totalCouponsTaken: newTaken,
+    totalCouponsGained: prevGained,
+    totalCouponsRedeemed: prevGained,
+    currentCouponsBalance: newBal,
     coupons: [...(market.coupons || []), newMarketCoupon],
   };
 
   return { updatedStoreCoupon, updatedMarket, transferVal };
+}
+
+function recordSubMarketCouponGainLogic(market, amount, couponId, quantity) {
+  const prevBal = market.currentCouponsBalance ?? Math.max(
+    0,
+    (market.totalCouponsTaken || 0) - (market.totalCouponsGained || market.totalCouponsRedeemed || 0)
+  );
+  const newBal = Math.max(0, prevBal - amount);
+  const prevGained = market.totalCouponsGained || market.totalCouponsRedeemed || 0;
+  const newGained = prevGained + amount;
+
+  const coupons = (market.coupons || []).map((c) => {
+    if (couponId && c.id === couponId) {
+      const red = (c.redeemedQuantity || 0) + (quantity || Math.round(amount / (c.unitValue || 1)));
+      return {
+        ...c,
+        redeemedQuantity: red,
+        isRedeemed: red >= c.totalQuantity,
+      };
+    }
+    return c;
+  });
+
+  return {
+    ...market,
+    currentCouponsBalance: newBal,
+    totalCouponsGained: newGained,
+    totalCouponsRedeemed: newGained,
+    coupons,
+  };
 }
 
 test('Store Coupons: Separate Goods Money and Coupon Money combine into Grand Combined Value without mixing', () => {
@@ -901,6 +941,97 @@ test('Store Coupons: Transferring store coupons to kiosk updates store stock and
   assert.strictEqual(receivedCoupon.unitValue, 50);
   assert.strictEqual(receivedCoupon.value, 1000);
   assert.strictEqual(receivedCoupon.redeemedQuantity, 0);
+  assert.strictEqual(result.updatedMarket.totalCouponsTaken, 1000);
+  assert.strictEqual(result.updatedMarket.currentCouponsBalance, 1000);
+});
+
+test('SubMarket Coupon Strategy: Sub-market takes coupons from store stock and updates coupon balance', () => {
+  const storeCoupon = {
+    id: 'scpn_lunch',
+    name: 'Lunch Coupon',
+    unitValue: 40,
+    totalQuantity: 50,
+    inStockQuantity: 50,
+    transferredQuantity: 0,
+  };
+
+  const market = {
+    id: 'm_delta',
+    name: 'Delta Kiosk',
+    currentDebt: 1200, // Goods debt
+    totalGoodsTaken: 2000,
+    totalGainPaid: 800,
+    totalCouponsTaken: 0,
+    totalCouponsGained: 0,
+    currentCouponsBalance: 0,
+    coupons: [],
+  };
+
+  // Transfer 15 coupons (15 * 40 = 600 EGP) from store to Delta Kiosk
+  const { updatedStoreCoupon, updatedMarket, transferVal } = transferStoreCouponToMarketLogic(storeCoupon, market, 15);
+
+  assert.strictEqual(transferVal, 600);
+  assert.strictEqual(updatedStoreCoupon.inStockQuantity, 35);
+  assert.strictEqual(updatedStoreCoupon.transferredQuantity, 15);
+
+  // Market coupon balances are updated
+  assert.strictEqual(updatedMarket.totalCouponsTaken, 600);
+  assert.strictEqual(updatedMarket.currentCouponsBalance, 600);
+  assert.strictEqual(updatedMarket.totalCouponsGained, 0);
+
+  // Goods debt is completely unaffected
+  assert.strictEqual(updatedMarket.currentDebt, 1200);
+  assert.strictEqual(updatedMarket.totalGoodsTaken, 2000);
+  assert.strictEqual(updatedMarket.totalGainPaid, 800);
+});
+
+test('SubMarket Coupon Strategy: Returning coupon value subtracts from coupons and adds to total coupons gained', () => {
+  let market = {
+    id: 'm_delta',
+    name: 'Delta Kiosk',
+    currentDebt: 1200, // Goods debt
+    totalGoodsTaken: 2000,
+    totalGainPaid: 800,
+    totalCouponsTaken: 600,
+    totalCouponsGained: 0,
+    currentCouponsBalance: 600,
+    coupons: [
+      { id: 'cpn_1', name: 'Lunch Coupon', totalQuantity: 15, redeemedQuantity: 0, unitValue: 40, value: 600 },
+    ],
+  };
+
+  // Step 1: 5 coupons come back from the kiosk (5 * 40 = 200 EGP)
+  // "when a cupon value comes back itis coming back similar to the way the goods is gained
+  // but the value will be subtracted from the cupons and it will be total cupons gained"
+  market = recordSubMarketCouponGainLogic(market, 200, 'cpn_1', 5);
+
+  // Value is subtracted from remaining coupons balance:
+  assert.strictEqual(market.currentCouponsBalance, 400); // 600 - 200 = 400 EGP
+
+  // Value is added to total coupons gained:
+  assert.strictEqual(market.totalCouponsGained, 200); // 0 + 200 = 200 EGP
+  assert.strictEqual(market.totalCouponsRedeemed, 200); // backward-compatible synonym
+
+  // Goods debt and goods gain are completely unaffected!
+  assert.strictEqual(market.currentDebt, 1200);
+  assert.strictEqual(market.totalGainPaid, 800);
+
+  // Total money on market combines goods debt + remaining coupons balance:
+  const totalMoneyOnMarket = market.currentDebt + market.currentCouponsBalance;
+  assert.strictEqual(totalMoneyOnMarket, 1600); // 1200 goods + 400 coupons
+
+  // Step 2: Remaining 10 coupons come back (10 * 40 = 400 EGP)
+  market = recordSubMarketCouponGainLogic(market, 400, 'cpn_1', 10);
+
+  // Remaining coupons balance is fully settled:
+  assert.strictEqual(market.currentCouponsBalance, 0); // 400 - 400 = 0 EGP
+
+  // Total coupons gained reaches the full 600 EGP:
+  assert.strictEqual(market.totalCouponsGained, 600);
+
+  // Total money on market is now only the goods debt:
+  const finalTotalMoney = market.currentDebt + market.currentCouponsBalance;
+  assert.strictEqual(finalTotalMoney, 1200);
 });
 
 
