@@ -7,6 +7,7 @@ export interface User {
   role: UserRole;
   phone?: string;
   firebaseUid?: string;
+  password?: string;
 }
 
 export interface InventoryItem {

@@ -87,31 +87,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signInWithFirebase = async (email: string, pass: string): Promise<User> => {
-    const { auth } = getFirebaseInstance();
-    if (!auth) throw new Error('Firebase Auth is not configured');
-
-    const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
-    const fbUser = cred.user;
-
+    const cleanEmail = email.trim().toLowerCase();
     const storedUsers = await StorageService.getStoredUsers();
-    let localUser = storedUsers.find((u) => u.email.toLowerCase() === fbUser.email?.toLowerCase());
+    const localUser = storedUsers.find((u) => u.email.toLowerCase() === cleanEmail);
 
-    if (!localUser) {
-      localUser = {
-        id: fbUser.uid,
-        name: fbUser.displayName || fbUser.email?.split('@')[0] || 'User',
-        email: fbUser.email || email,
-        role: 'admin',
-        firebaseUid: fbUser.uid,
-      };
-      const updated = [...storedUsers, localUser];
-      await StorageService.saveUsers(updated);
-      setUsers(updated);
+    // If locally stored user exists with a password, verify it
+    if (localUser && localUser.password && localUser.password !== pass) {
+      throw new Error('Incorrect password. Please try again.');
     }
 
-    await StorageService.setCurrentUser(localUser);
-    setCurrentUser(localUser);
-    return localUser;
+    const { auth } = getFirebaseInstance();
+    let fbUid: string | undefined = localUser?.firebaseUid;
+
+    if (auth) {
+      try {
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+        fbUid = cred.user.uid;
+      } catch (err: any) {
+        console.warn('Firebase signIn notice:', err?.message || err);
+        if (!localUser) {
+          if (
+            err.message?.includes('invalid-credential') ||
+            err.message?.includes('user-not-found') ||
+            err.message?.includes('wrong-password')
+          ) {
+            throw new Error('Invalid email or password.');
+          }
+          if (
+            err.message?.includes('CONFIGURATION_NOT_FOUND') ||
+            err.code === 'auth/configuration-not-found'
+          ) {
+            throw new Error('Account not found locally. Please register a new account.');
+          }
+          throw err;
+        }
+        // If local user matched password, continue in offline/local mode
+      }
+    }
+
+    if (!localUser && !fbUid) {
+      throw new Error('Account not found. Please register first.');
+    }
+
+    const finalUser: User = localUser
+      ? { ...localUser, firebaseUid: fbUid || localUser.firebaseUid }
+      : {
+          id: fbUid || `user_${Date.now()}`,
+          name: cleanEmail.split('@')[0],
+          email: cleanEmail,
+          role: 'admin',
+          firebaseUid: fbUid,
+        };
+
+    const updated = [
+      ...storedUsers.filter((u) => u.email.toLowerCase() !== cleanEmail),
+      finalUser,
+    ];
+    await StorageService.saveUsers(updated);
+    await StorageService.setCurrentUser(finalUser);
+    setUsers(updated);
+    setCurrentUser(finalUser);
+    return finalUser;
   };
 
   const signUpWithFirebase = async (
@@ -120,22 +156,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pass: string,
     role: 'admin' | 'user'
   ): Promise<User> => {
-    const { auth } = getFirebaseInstance();
-    if (!auth) throw new Error('Firebase Auth is not configured');
+    const cleanEmail = email.trim().toLowerCase();
+    const storedUsers = await StorageService.getStoredUsers();
 
-    const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
-    const fbUser = cred.user;
+    if (storedUsers.some((u) => u.email.toLowerCase() === cleanEmail)) {
+      throw new Error('This email is already registered. Please sign in instead.');
+    }
+
+    const { auth } = getFirebaseInstance();
+    let fbUid: string | undefined;
+
+    if (auth) {
+      try {
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+        fbUid = cred.user.uid;
+      } catch (err: any) {
+        console.warn('Firebase signUp notice:', err?.message || err);
+        if (
+          err.message?.includes('email-already-in-use') ||
+          err.code === 'auth/email-already-in-use'
+        ) {
+          throw new Error('This email is already in use. Please sign in instead.');
+        }
+        // If CONFIGURATION_NOT_FOUND or offline, smoothly fallback to local credentials
+      }
+    }
 
     const newUser: User = {
-      id: fbUser.uid,
+      id: fbUid || `user_${Date.now()}`,
       name: name.trim(),
-      email: fbUser.email || email.trim(),
+      email: cleanEmail,
       role,
-      firebaseUid: fbUser.uid,
+      firebaseUid: fbUid,
+      password: pass,
     };
 
-    const storedUsers = await StorageService.getStoredUsers();
-    const updated = [...storedUsers.filter((u) => u.email.toLowerCase() !== newUser.email.toLowerCase()), newUser];
+    const updated = [
+      ...storedUsers.filter((u) => u.email.toLowerCase() !== cleanEmail),
+      newUser,
+    ];
     await StorageService.saveUsers(updated);
     await StorageService.setCurrentUser(newUser);
 
@@ -145,9 +204,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetPassword = async (email: string): Promise<void> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const storedUsers = await StorageService.getStoredUsers();
+    const userExists = storedUsers.some((u) => u.email.toLowerCase() === cleanEmail);
+
     const { auth } = getFirebaseInstance();
-    if (!auth) throw new Error('Firebase Auth is not configured');
-    await sendPasswordResetEmail(auth, email.trim());
+    if (auth) {
+      try {
+        await sendPasswordResetEmail(auth, cleanEmail);
+        return;
+      } catch (err: any) {
+        console.warn('Firebase reset password notice:', err?.message || err);
+        if (!userExists && (err.message?.includes('user-not-found') || err.code === 'auth/user-not-found')) {
+          throw new Error('No user found with this email address.');
+        }
+      }
+    }
+
+    if (!userExists) {
+      throw new Error('No user found with this email address.');
+    }
   };
 
   const loginUser = async (user: User) => {

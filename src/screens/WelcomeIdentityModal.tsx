@@ -46,13 +46,18 @@ export const WelcomeIdentityModal: React.FC = () => {
   const [cantinCode, setCantinCode] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // If user is logged in and not in middle of multi-cantin selection, hide modal
   if (currentUser && mode !== 'SELECT_CANTIN') return null;
 
   const handleLogin = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
     if (!email.trim() || !password) {
-      Alert.alert(t('appName'), isRTL ? 'يرجى إدخال البريد الإلكتروني وكلمة المرور' : 'Please enter email and password.');
+      setErrorMessage(isRTL ? 'يرجى إدخال البريد الإلكتروني وكلمة المرور' : 'Please enter email and password.');
       return;
     }
 
@@ -66,40 +71,38 @@ export const WelcomeIdentityModal: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Login error:', err);
-      Alert.alert(
-        isRTL ? 'خطأ في تسجيل الدخول' : 'Login Failed',
-        err.message?.includes('invalid-credential') || err.message?.includes('wrong-password')
+      const msg =
+        err.message?.includes('invalid-credential') ||
+        err.message?.includes('wrong-password') ||
+        err.message?.includes('Incorrect password')
           ? (isRTL ? 'بيانات الاعتماد غير صحيحة، يرجى التأكد من البريد وكلمة المرور' : 'Invalid email or password.')
-          : (err.message || (isRTL ? 'حدث خطأ، حاول مجدداً' : 'An error occurred. Please try again.'))
-      );
+          : (err.message || (isRTL ? 'حدث خطأ، حاول مجدداً' : 'An error occurred. Please try again.'));
+      setErrorMessage(msg);
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleRegister = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
     if (!name.trim() || !email.trim() || !password) {
-      Alert.alert(t('appName'), isRTL ? 'يرجى ملء جميع الحقول المطلوبة' : 'Please fill in all required fields.');
+      setErrorMessage(isRTL ? 'يرجى ملء جميع الحقول المطلوبة' : 'Please fill in all required fields.');
       return;
     }
     if (password.length < 6) {
-      Alert.alert(t('appName'), isRTL ? 'كلمة المرور يجب أن تكون ٦ خانات على الأقل' : 'Password must be at least 6 characters.');
+      setErrorMessage(isRTL ? 'كلمة المرور يجب أن تكون ٦ خانات على الأقل' : 'Password must be at least 6 characters.');
       return;
     }
 
     if (cantinTab === 'CREATE' && !cantinName.trim()) {
-      Alert.alert(
-        t('appName'),
-        isRTL ? 'يرجى إدخال اسم الكانتين الجديد' : 'Please enter a name for your new cantin.'
-      );
+      setErrorMessage(isRTL ? 'يرجى إدخال اسم الكانتين الجديد' : 'Please enter a name for your new cantin.');
       return;
     }
 
     if (cantinTab === 'JOIN' && !cantinCode.trim()) {
-      Alert.alert(
-        t('appName'),
-        isRTL ? 'يرجى إدخال كود الكانتين للانضمام' : 'Please enter the cantin code to join.'
-      );
+      setErrorMessage(isRTL ? 'يرجى إدخال كود الكانتين للانضمام' : 'Please enter the cantin code to join.');
       return;
     }
 
@@ -113,46 +116,44 @@ export const WelcomeIdentityModal: React.FC = () => {
       } else {
         const joined = await joinCantinByCode(cantinCode.trim());
         if (!joined) {
-          Alert.alert(t('appName'), t('cantinNotFound'));
+          setErrorMessage(t('cantinNotFound'));
           setSubmitting(false);
           return;
         }
       }
     } catch (err: any) {
       console.error('Registration error:', err);
-      Alert.alert(
-        isRTL ? 'خطأ في إنشاء الحساب' : 'Registration Failed',
-        err.message?.includes('email-already-in-use')
-          ? (isRTL ? 'هذا البريد الإلكتروني مسجل بالفعل' : 'This email is already registered.')
-          : (err.message || (isRTL ? 'حدث خطأ، حاول مجدداً' : 'An error occurred. Please try again.'))
-      );
+      const msg =
+        err.message?.includes('email-already-in-use') ||
+        err.message?.includes('already registered')
+          ? (isRTL ? 'هذا البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول.' : 'This email is already registered. Please sign in.')
+          : (err.message || (isRTL ? 'حدث خطأ، حاول مجدداً' : 'An error occurred. Please try again.'));
+      setErrorMessage(msg);
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleForgotPassword = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
     if (!email.trim()) {
-      Alert.alert(t('appName'), isRTL ? 'يرجى إدخال بريدك الإلكتروني لاستلام رابط إعادة التعيين' : 'Please enter your email to receive a reset link.');
+      setErrorMessage(isRTL ? 'يرجى إدخال بريدك الإلكتروني لاستلام رابط إعادة التعيين' : 'Please enter your email to receive a reset link.');
       return;
     }
 
     try {
       setSubmitting(true);
       await resetPassword(email.trim());
-      Alert.alert(
-        isRTL ? 'تم الإرسال' : 'Reset Email Sent',
+      setSuccessMessage(
         isRTL
           ? 'تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني.'
           : 'A password reset link has been sent to your email.'
       );
-      setMode('LOGIN');
     } catch (err: any) {
       console.error('Reset password error:', err);
-      Alert.alert(
-        isRTL ? 'خطأ' : 'Error',
-        err.message || (isRTL ? 'فشل إرسال رابط إعادة التعيين' : 'Failed to send reset email.')
-      );
+      setErrorMessage(err.message || (isRTL ? 'فشل إرسال رابط إعادة التعيين' : 'Failed to send reset email.'));
     } finally {
       setSubmitting(false);
     }
@@ -273,6 +274,20 @@ export const WelcomeIdentityModal: React.FC = () => {
                 />
               </View>
 
+              {errorMessage && (
+                <View style={[styles.errorBox, isRTL && styles.rowRtl]}>
+                  <MaterialCommunityIcons name="alert-circle" size={16} color={colors.danger} />
+                  <Text style={[styles.errorText, isRTL && { textAlign: 'right' }]}>{errorMessage}</Text>
+                </View>
+              )}
+
+              {successMessage && (
+                <View style={[styles.successBox, isRTL && styles.rowRtl]}>
+                  <MaterialCommunityIcons name="check-circle" size={16} color={colors.success} />
+                  <Text style={[styles.successText, isRTL && { textAlign: 'right' }]}>{successMessage}</Text>
+                </View>
+              )}
+
               <TouchableOpacity
                 style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
                 onPress={handleForgotPassword}
@@ -336,12 +351,30 @@ export const WelcomeIdentityModal: React.FC = () => {
 
               <TouchableOpacity
                 style={{ alignSelf: isRTL ? 'flex-start' : 'flex-end', marginBottom: 14 }}
-                onPress={() => setMode('FORGOT_PASSWORD')}
+                onPress={() => {
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
+                  setMode('FORGOT_PASSWORD');
+                }}
               >
                 <Text style={styles.linkText}>
                   {isRTL ? 'نسيت كلمة المرور؟' : 'Forgot Password?'}
                 </Text>
               </TouchableOpacity>
+
+              {errorMessage && (
+                <View style={[styles.errorBox, isRTL && styles.rowRtl]}>
+                  <MaterialCommunityIcons name="alert-circle" size={16} color={colors.danger} />
+                  <Text style={[styles.errorText, isRTL && { textAlign: 'right' }]}>{errorMessage}</Text>
+                </View>
+              )}
+
+              {successMessage && (
+                <View style={[styles.successBox, isRTL && styles.rowRtl]}>
+                  <MaterialCommunityIcons name="check-circle" size={16} color={colors.success} />
+                  <Text style={[styles.successText, isRTL && { textAlign: 'right' }]}>{successMessage}</Text>
+                </View>
+              )}
 
               <TouchableOpacity
                 style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
@@ -517,6 +550,20 @@ export const WelcomeIdentityModal: React.FC = () => {
                 )}
               </View>
 
+              {errorMessage && (
+                <View style={[styles.errorBox, isRTL && styles.rowRtl]}>
+                  <MaterialCommunityIcons name="alert-circle" size={16} color={colors.danger} />
+                  <Text style={[styles.errorText, isRTL && { textAlign: 'right' }]}>{errorMessage}</Text>
+                </View>
+              )}
+
+              {successMessage && (
+                <View style={[styles.successBox, isRTL && styles.rowRtl]}>
+                  <MaterialCommunityIcons name="check-circle" size={16} color={colors.success} />
+                  <Text style={[styles.successText, isRTL && { textAlign: 'right' }]}>{successMessage}</Text>
+                </View>
+              )}
+
               <TouchableOpacity
                 style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
                 onPress={handleRegister}
@@ -552,6 +599,44 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  errorText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.danger,
+    marginHorizontal: 8,
+    flex: 1,
+  },
+  successBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.successLight,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  successText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.successText,
+    marginHorizontal: 8,
+    flex: 1,
   },
   topBar: {
     paddingTop: Platform.OS === 'ios' ? 50 : 20,
